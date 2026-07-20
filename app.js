@@ -122,48 +122,40 @@ async function searchSeries() {
     if (!query) return;
 
     try {
-        // Svuota i risultati precedenti e mostra caricamento
-        resultsContainer.innerHTML = '<span style="color: #a1a1aa;">Ricerca in corso...</span>';
-
+        resultsContainer.innerHTML = '<span style="color: var(--text-muted);">Ricerca in corso...</span>';
         const url = TMDB_CONFIG.buildSearchUrl(query);
         const response = await fetch(url);
-        
         if (!response.ok) throw new Error("Errore durante la ricerca.");
         
         const data = await response.json();
-        const results = data.results;
-
-        // Pulizia del contenitore
         resultsContainer.innerHTML = '';
 
-        if (results.length === 0) {
-            resultsContainer.innerHTML = '<span style="color: #ef4444;">Nessun risultato trovato.</span>';
+        if (data.results.length === 0) {
+            resultsContainer.innerHTML = '<span style="color: var(--danger);">Nessun risultato trovato.</span>';
             return;
         }
 
-        // Prendi solo i primi 5 risultati per non inondare l'interfaccia
-        const topResults = results.slice(0, 5);
-
-        topResults.forEach(series => {
-            // Estrae l'anno di uscita se disponibile
+        data.results.slice(0, 5).forEach(series => {
             const year = series.first_air_date ? series.first_air_date.substring(0, 4) : 'N/A';
-            
             const item = document.createElement('div');
-            item.style = "display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #18181b; border: 1px solid #3f3f46; border-radius: 4px;";
+            item.className = 'card';
+            item.style.display = 'flex';
+            item.style.justifyContent = 'space-between';
+            item.style.alignItems = 'center';
+            item.style.padding = '1rem';
+            item.style.marginBottom = '0';
+            
             item.innerHTML = `
                 <div>
-                    <strong>${series.name}</strong> <span style="color: #a1a1aa; font-size: 0.9em;">(${year})</span>
+                    <strong>${series.name}</strong> <span style="color: var(--text-muted); font-size: 0.9em;">(${year})</span>
                 </div>
-                <button onclick="addSeriesToLibraryFromSearch(${series.id})" style="padding: 0.25rem 0.75rem; background: #4ade80; color: #064e3b; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.8rem;">
-                    Traccia
-                </button>
+                <button class="btn btn-success btn-small" onclick="addSeriesToLibraryFromSearch(${series.id})">Traccia</button>
             `;
             resultsContainer.appendChild(item);
         });
-
     } catch (error) {
         console.error(error);
-        resultsContainer.innerHTML = '<span style="color: #ef4444;">Errore di connessione o API.</span>';
+        resultsContainer.innerHTML = '<span style="color: var(--danger);">Errore di connessione o API.</span>';
     }
 }
 
@@ -221,144 +213,150 @@ async function backgroundSeasonSync(tvId, seasonsList) {
 // Renderizza il cruscotto principale dell'utente
 async function renderLibrary() {
     const grid = document.getElementById('library-grid');
-    grid.innerHTML = '<span style="color: #a1a1aa; grid-column: 1 / -1;">Caricamento libreria...</span>';
+    grid.innerHTML = '<span style="color: var(--text-muted); grid-column: 1 / -1;">Caricamento libreria...</span>';
 
     try {
         const keys = await UserLibrary.keys();
-        
         if (keys.length === 0) {
-            grid.innerHTML = '<span style="color: #a1a1aa; grid-column: 1 / -1; text-align: center; padding: 2rem 0;">La tua libreria è vuota. Cerca una serie per iniziare.</span>';
+            grid.innerHTML = '<span style="color: var(--text-muted); grid-column: 1 / -1; text-align: center; padding: 2rem 0;">La tua libreria è vuota. Cerca una serie per iniziare.</span>';
             return;
         }
-
-        // Pulisce il messaggio di caricamento
         grid.innerHTML = '';
 
-        // Estrazione e incrocio dei dati
         for (const key of keys) {
-            // 1. Legge lo stato utente
             const userSeries = await UserLibrary.getItem(key);
-            // 2. Legge i metadati TMDB per la UI
-            const tmdbData = await TmdbCache.getItem(key);
+            let tmdbData = await TmdbCache.getItem(key);
 
             if (!tmdbData) {
-                console.warn(`[DATI MANCANTI] Trovato ID ${key} in libreria ma assente in cache.`);
-                continue; 
+                // Logica di reidratazione invariata
+                try {
+                    const url = TMDB_CONFIG.buildTvUrl(key);
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error("API irraggiungibile");
+                    tmdbData = await res.json();
+                    tmdbData.last_updated = Date.now();
+                    await TmdbCache.setItem(key, tmdbData);
+                    if (tmdbData.seasons && tmdbData.seasons.length > 0) backgroundSeasonSync(key, tmdbData.seasons);
+                } catch (e) {
+                    continue; 
+                }
             }
 
-            // Costruisce l'URL della locandina o usa un placeholder
-            const posterUrl = tmdbData.poster_path 
-                ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}`
-                : 'https://via.placeholder.com/500x750?text=No+Image';
-
-            // Crea la card della serie
+            const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Image';
             const card = document.createElement('div');
-            card.style = "background: #18181b; border: 1px solid #3f3f46; border-radius: 6px; overflow: hidden; cursor: pointer; transition: transform 0.2s;";
-            
-            // Effetto hover brutale in JS puro
-            card.onmouseover = () => card.style.transform = "scale(1.02)";
-            card.onmouseout = () => card.style.transform = "scale(1)";
-            
-            card.onclick = () => openDetailView(userSeries.id);
+            card.className = 'series-card';
+            card.onclick = () => {
+                openDetailView(userSeries.id);
+                switchTab('detail'); // Naviga automaticamente alla scheda dettaglio
+            };
 
             card.innerHTML = `
-                <img src="${posterUrl}" alt="${tmdbData.name}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; border-bottom: 1px solid #3f3f46;">
-                <div style="padding: 0.75rem;">
-                    <strong style="display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${tmdbData.name}">${tmdbData.name}</strong>
-                    <span style="display: block; color: #a1a1aa; font-size: 0.75rem; margin-top: 0.25rem;">Stato: ${userSeries.status}</span>
+                <img src="${posterUrl}" alt="${tmdbData.name}">
+                <div class="series-card-content">
+                    <span class="series-title" title="${tmdbData.name}">${tmdbData.name}</span>
+                    <span class="series-status">Stato: ${userSeries.status}</span>
                 </div>
             `;
-            
             grid.appendChild(card);
         }
-
     } catch (error) {
-        console.error("[CRITICO] Fallimento rendering libreria:", error);
-        grid.innerHTML = '<span style="color: #ef4444; grid-column: 1 / -1;">Errore durante la lettura del database locale.</span>';
+        console.error(error);
+        grid.innerHTML = '<span style="color: var(--danger); grid-column: 1 / -1;">Errore database locale.</span>';
     }
 }
 
-// Gestore per tornare al cruscotto principale
-function closeDetailView() {
-    document.getElementById('detail-view').style.display = 'none';
-    
-    // Mostriamo di nuovo le sezioni principali (Libreria e Ricerca)
-    document.getElementById('library-grid').parentElement.style.display = 'block';
-    document.getElementById('search-input').parentElement.parentElement.style.display = 'block'; 
-    
-    // Forza un ri-rendering per aggiornare lo status nel caso l'utente abbia tracciato episodi
-    renderLibrary();
-}
 
 // Motore di rendering degli episodi
 async function openDetailView(tvId) {
-    window.currentOpenTvId = String(tvId)
-    // Nasconde la UI principale
-    document.getElementById('library-grid').parentElement.style.display = 'none';
-    document.getElementById('search-input').parentElement.parentElement.style.display = 'none';
-    
-    const detailView = document.getElementById('detail-view');
+    window.currentOpenTvId = String(tvId);
     const detailContent = document.getElementById('detail-content');
-    
-    detailView.style.display = 'block';
-    detailContent.innerHTML = '<span style="color: #a1a1aa;">Estrazione dati dai silos...</span>';
+    detailContent.innerHTML = '<span style="color: var(--text-muted);">Estrazione dati...</span>';
 
     try {
-        // Query parallela ai due database
         const userSeries = await UserLibrary.getItem(String(tvId));
         const tmdbData = await TmdbCache.getItem(String(tvId));
+        if (!tmdbData || !userSeries) throw new Error("Dati mancanti.");
 
-        if (!tmdbData || !userSeries) throw new Error("Dati corrotti o mancanti nel database locale.");
-
-        let html = `<h2 style="margin-top: 0; color: #f4f4f5;">${tmdbData.name}</h2>`;
+        // Header della Serie Brutalista
+        let html = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem;">${tmdbData.name}</h2>
+                <button class="btn btn-danger btn-small" onclick="removeSeries(${tvId})">Elimina</button>
+            </div>
+        `;
         
-        // Verifica se il download in background è terminato
         if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
-            html += `<p style="color: #fbbf24; background: #451a03; padding: 1rem; border-radius: 4px;">Sincronizzazione episodi in corso... Attendi qualche secondo e riapri questa scheda.</p>`;
+            html += `<div class="card" style="border-color: var(--danger);"><p style="color: var(--danger); font-weight: bold; margin:0;">Sincronizzazione in corso... Attendi qualche secondo e riapri la scheda.</p></div>`;
             detailContent.innerHTML = html;
             return;
         }
 
-        html += `<div style="display: flex; flex-direction: column; gap: 1.5rem;">`;
-        
-        // Costruzione dinamica delle stagioni
+        // Costruzione delle Stagioni stile SetFree
         for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
-            html += `<div style="background: #18181b; padding: 1.5rem; border: 1px solid #3f3f46; border-radius: 6px;">`;
-            html += `<h3 style="margin-top: 0; color: #4ade80; border-bottom: 1px solid #27272a; padding-bottom: 0.5rem;">Stagione ${seasonNum}</h3>`;
+            const bodyId = `season-body-${tvId}-${seasonNum}`;
+            const numEpisodes = seasonData.episodes ? seasonData.episodes.length : 0;
+            
+            html += `
+                <div style="border: 1.5px solid var(--text); border-left: 8px solid var(--primary); background: var(--card-bg); margin-bottom: 1rem; border-radius: 0;">
+                    
+                    <!-- HEADER COMPATTO (Clickabile) -->
+                    <div onclick="const b = document.getElementById('${bodyId}'); b.style.display = b.style.display === 'none' ? 'block' : 'none';" 
+                         style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
+                        
+                        <div>
+                            <strong style="font-size: 1.2rem; text-transform: uppercase; display: block;">Stagione ${seasonNum}</strong>
+                            <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">
+                                ${numEpisodes} EPISODI <span style="font-size: 0.7rem; font-weight: 400; opacity: 0.7;">(Clicca per espandere)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LISTA EPISODI (Nascosta di default) -->
+                    <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
+            `;
             
             if (seasonData.episodes && seasonData.episodes.length > 0) {
-                seasonData.episodes.forEach(ep => {
-                    // La chiave di archiviazione per la mappa (Es. S01E01)
+                seasonData.episodes.forEach((ep, i) => {
                     const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                    
-                    // Complessità O(1): Verifichiamo all'istante se la chiave esiste nella mappa utente
                     const isWatched = userSeries.progress && userSeries.progress[epKey];
                     
-                    const btnColor = isWatched ? '#10b981' : '#27272a';
+                    // Stili reattivi per episodio visto/non visto
+                    const titleClass = isWatched ? 'ep-title watched' : 'ep-title';
+                    const titleStyle = isWatched ? 'color: var(--text-muted); text-decoration: line-through;' : 'color: var(--text);';
+                    const btnClass = isWatched ? 'btn btn-success btn-small' : 'btn btn-outline btn-small';
                     const btnText = isWatched ? 'Visto' : 'Segna come visto';
-                    const titleStyle = isWatched ? 'color: #52525b; text-decoration: line-through;' : 'color: #fafafa;';
+                    
+                    const isLast = i === seasonData.episodes.length - 1;
+                    const borderBottom = isLast ? '' : 'border-bottom: 1px solid var(--border);';
 
                     html += `
-                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid #27272a;">
-                            <span id="title-${tvId}-${epKey}" style="${titleStyle}"><span style="color: #52525b; width: 25px; display: inline-block;">${ep.episode_number}.</span> ${ep.name}</span>
-                            <button id="btn-${tvId}-${epKey}" onclick="toggleEpisode(${tvId}, '${epKey}')" style="padding: 0.4rem 0.8rem; background: ${btnColor}; color: white; border: 1px solid #3f3f46; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-weight: bold;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 0; ${borderBottom}">
+                            <div style="padding-right: 1rem;">
+                                <span id="title-${tvId}-${epKey}" class="${titleClass}" style="display: block; font-size: 1rem; font-weight: 700; ${titleStyle}">
+                                    <span style="color: var(--text-muted); display: inline-block; width: 28px;">${ep.episode_number}.</span> 
+                                    ${ep.name}
+                                </span>
+                            </div>
+                            <button id="btn-${tvId}-${epKey}" class="${btnClass}" style="white-space: nowrap; flex-shrink: 0;" onclick="toggleEpisode(${tvId}, '${epKey}')">
                                 ${btnText}
                             </button>
                         </div>
                     `;
                 });
             } else {
-                html += `<span style="color: #a1a1aa;">Nessun episodio trovato.</span>`;
+                html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio trovato.</div>`;
             }
-            html += `</div>`;
+            
+            html += `
+                    </div>
+                </div>
+            `;
         }
-        
-        html += `</div>`;
         detailContent.innerHTML = html;
 
     } catch (error) {
         console.error(error);
-        detailContent.innerHTML = '<span style="color: #ef4444;">Errore critico nella lettura della cache. Controlla la console.</span>';
+        detailContent.innerHTML = '<span style="color: var(--danger);">Errore critico nella lettura della cache. Controlla la console.</span>';
     }
 }
 
@@ -366,34 +364,56 @@ async function openDetailView(tvId) {
 async function toggleEpisode(tvId, epKey) {
     try {
         const userSeries = await UserLibrary.getItem(String(tvId));
-        if (!userSeries) return;
-
-        if (!userSeries.progress) userSeries.progress = {};
-
-        const isWatched = !!userSeries.progress[epKey];
+        const tmdbData = await TmdbCache.getItem(String(tvId));
         
-        if (isWatched) {
-            delete userSeries.progress[epKey];
-            userSeries.watched_count = Math.max(0, userSeries.watched_count - 1);
-        } else {
+        // 1. TROVA IL MINUTAGGIO ESATTO DELL'EPISODIO
+        let epRuntime = 45; // Fallback di sicurezza
+        const match = epKey.match(/S(\d+)E(\d+)/);
+        
+        if (match && tmdbData && tmdbData.detailed_seasons) {
+            const sNum = parseInt(match[1], 10);
+            const eNum = parseInt(match[2], 10);
+            const seasonData = tmdbData.detailed_seasons[sNum];
+            
+            if (seasonData && seasonData.episodes) {
+                const epData = seasonData.episodes.find(e => e.episode_number === eNum);
+                // TMDB fornisce 'runtime' sul singolo episodio se disponibile
+                if (epData && epData.runtime) {
+                    epRuntime = epData.runtime;
+                } else if (tmdbData.episode_run_time && tmdbData.episode_run_time.length > 0) {
+                    // Fallback sulla media della serie se l'episodio specifico non ha il dato
+                    epRuntime = tmdbData.episode_run_time[0];
+                }
+            }
+        }
+        const isWatched = !!(userSeries.progress && userSeries.progress[epKey]);
+
+        // 2. AGGIORNA I CONTATORI
+        if (!isWatched) {
+            // L'utente ha appena visto l'episodio
             userSeries.progress[epKey] = Date.now();
-            userSeries.watched_count += 1;
+            userSeries.watched_count = (userSeries.watched_count || 0) + 1;
+            userSeries.watched_minutes = (userSeries.watched_minutes || 0) + epRuntime;
+        } else {
+            // L'utente ha rimosso la spunta
+            delete userSeries.progress[epKey];
+            userSeries.watched_count = Math.max(0, (userSeries.watched_count || 0) - 1);
+            userSeries.watched_minutes = Math.max(0, (userSeries.watched_minutes || 0) - epRuntime);
         }
 
-        // 1. Scrittura asincrona
         await UserLibrary.setItem(String(tvId), userSeries);
         
-        // 2. Aggiornamento Chirurgico dell'Interfaccia (O(1) sul DOM)
+        // 2. Aggiornamento DOM Chirurgico con le nuove classi CSS
         const btn = document.getElementById(`btn-${tvId}-${epKey}`);
         const titleSpan = document.getElementById(`title-${tvId}-${epKey}`);
         
         if (btn && titleSpan) {
-            btn.style.background = !isWatched ? '#10b981' : '#27272a';
+            btn.className = !isWatched ? 'btn btn-success btn-small' : 'btn btn-outline btn-small';
             btn.innerText = !isWatched ? 'Visto' : 'Segna come visto';
-            titleSpan.style.color = !isWatched ? '#52525b' : '#fafafa';
+            titleSpan.className = !isWatched ? 'ep-title watched' : 'ep-title';
+            titleSpan.style.color = !isWatched ? 'var(--text-muted)' : 'var(--text)';
             titleSpan.style.textDecoration = !isWatched ? 'line-through' : 'none';
         }
-
     } catch (error) {
         console.error("[CRITICO] Fallimento salvataggio progresso:", error);
     }
@@ -461,6 +481,233 @@ async function importData(event) {
     reader.readAsText(file);
 }
 
+// ==========================================
+// MOTORE UI E NAVIGAZIONE
+// ==========================================
+
+// Inizializzazione Tema
+const currentTheme = localStorage.getItem('tvTheme') || 'dark';
+document.documentElement.setAttribute('data-theme', currentTheme);
+
+function toggleTheme() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const newTheme = isDark ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('tvTheme', newTheme);
+    updateSettingsUI();
+}
+
+// Navigazione a Schede
+function switchTab(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(`view-${viewId}`).classList.add('active');
+    
+    document.querySelectorAll('.nav-links button').forEach(b => b.classList.remove('active'));
+    const targetNav = document.getElementById(`nav-${viewId}`);
+    if (targetNav) targetNav.classList.add('active');
+
+    // Trigger selettivo del motore di rendering
+    if (viewId === 'library') renderLibrary();
+    if (viewId === 'home') renderHome();
+    if (viewId === 'stats') renderStats();
+    
+    window.scrollTo(0, 0);
+}
+
+// Modale Impostazioni
+function openSettings() {
+    updateSettingsUI();
+    document.getElementById('modal-settings').classList.add('active');
+}
+
+function closeSettings(event, force = false) {
+    if (force || event.target.id === 'modal-settings') {
+        document.getElementById('modal-settings').classList.remove('active');
+    }
+}
+
+function updateSettingsUI() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const btn = document.getElementById('btn-toggle-theme');
+    if (btn) {
+        btn.innerText = isDark ? 'ON' : 'OFF';
+        btn.style.borderColor = isDark ? 'var(--text)' : 'var(--border)';
+        btn.style.color = isDark ? 'var(--card-bg)' : 'var(--text-muted)';
+        btn.style.background = isDark ? 'var(--text)' : 'transparent';
+    }
+}
+
+// ==========================================
+// CRUSCOTTO (HOME) E STATISTICHE
+// ==========================================
+
+async function renderHome() {
+    const container = document.getElementById('home-content');
+    container.innerHTML = '<span style="color: var(--text-muted);">Lettura progressi...</span>';
+    
+    try {
+        const keys = await UserLibrary.keys();
+        if(keys.length === 0) {
+            container.innerHTML = `
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie nella tua libreria.</p>
+                <button class="btn btn-success" onclick="switchTab('search')">Cerca una serie</button>
+            `;
+            return;
+        }
+        
+        // Algoritmo per trovare la serie con l'interazione più recente
+        let lastWatchedSeries = null;
+        let lastWatchedTime = 0;
+        
+        for (const key of keys) {
+            const userSeries = await UserLibrary.getItem(key);
+            if(userSeries.progress) {
+                for(const ep in userSeries.progress) {
+                    if(userSeries.progress[ep] > lastWatchedTime) {
+                        lastWatchedTime = userSeries.progress[ep];
+                        lastWatchedSeries = userSeries;
+                    }
+                }
+            }
+        }
+        
+        if(!lastWatchedSeries) {
+            container.innerHTML = `
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">Hai aggiunto serie alla libreria, ma non hai ancora segnato nessun episodio come visto.</p>
+                <button class="btn" onclick="switchTab('library')">Apri la Libreria</button>
+            `;
+            return;
+        }
+        
+        const tmdbData = await TmdbCache.getItem(String(lastWatchedSeries.id));
+        const dateStr = new Date(lastWatchedTime).toLocaleDateString('it-IT');
+        
+        container.innerHTML = `
+            <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.5rem; letter-spacing: 0.5px;">Visto di recente (${dateStr})</p>
+            <div style="border: 1.5px solid var(--text); border-left: 8px solid var(--primary); padding: 1.25rem; background: var(--input-bg); display: flex; justify-content: space-between; align-items: center;">
+                <strong style="font-size: 1.1rem; text-transform: uppercase; line-height: 1.2;">${tmdbData ? tmdbData.name : 'Dati mancanti'}</strong>
+                <button class="btn btn-success btn-small" onclick="openDetailView(${lastWatchedSeries.id}); switchTab('detail');">Continua</button>
+            </div>
+        `;
+    } catch (e) {
+        console.error("[CRITICO] Fallimento rendering Home:", e);
+        container.innerHTML = '<span style="color: var(--danger);">Errore nel caricamento del cruscotto.</span>';
+    }
+}
+
+// ==========================================
+// MOTORE DI CONFERMA ASINCRONO
+// ==========================================
+function customConfirm(message) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('modal-confirm');
+        const msgEl = document.getElementById('modal-confirm-message');
+        const btnOk = document.getElementById('btn-confirm-ok');
+        const btnCancel = document.getElementById('btn-confirm-cancel');
+
+        // Imposta il messaggio e mostra la modale
+        msgEl.innerText = message;
+        modal.classList.add('active');
+
+        // Funzione di pulizia per rimuovere i listener dopo il click
+        const cleanup = () => {
+            modal.classList.remove('active');
+            btnOk.removeEventListener('click', onOk);
+            btnCancel.removeEventListener('click', onCancel);
+        };
+
+        const onOk = () => { cleanup(); resolve(true); };
+        const onCancel = () => { cleanup(); resolve(false); };
+
+        btnOk.addEventListener('click', onOk);
+        btnCancel.addEventListener('click', onCancel);
+    });
+}
+
+async function renderStats() {
+    const container = document.getElementById('stats-content');
+    container.innerHTML = '<span style="color: var(--text-muted);">Calcolo metriche in corso...</span>';
+    
+    try {
+        const keys = await UserLibrary.keys();
+        let totalSeries = keys.length;
+        let totalEpisodes = 0;
+        let totalMinutes = 0;
+        
+        for (const key of keys) {
+            const userSeries = await UserLibrary.getItem(key);
+            
+            const epCount = userSeries.watched_count || 0;
+            totalEpisodes += epCount;
+            
+            // Se esiste il nuovo contatore esatto, usalo.
+            if (userSeries.watched_minutes !== undefined) {
+                totalMinutes += userSeries.watched_minutes;
+            } else {
+                // RETROCOMPATIBILITÀ
+                const tmdbData = await TmdbCache.getItem(key);
+                let runtime = 45; 
+                if(tmdbData && tmdbData.episode_run_time && tmdbData.episode_run_time.length > 0) {
+                    runtime = tmdbData.episode_run_time[0];
+                }
+                totalMinutes += (epCount * runtime);
+            }
+        }
+        
+        // Nuova logica di calcolo ad alta precisione
+        const hours = Math.floor(totalMinutes / 60);
+        const remainingMinutes = totalMinutes % 60;
+        const days = (totalMinutes / 1440).toFixed(1); // 1440 minuti in un giorno esatto
+        
+        container.innerHTML = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--input-bg);">
+                    <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Serie Tracciate</div>
+                    <div style="font-size: 2rem; font-weight: 900; line-height: 1.1; margin-top: 0.2rem;">${totalSeries}</div>
+                </div>
+                <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--input-bg);">
+                    <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Episodi Visti</div>
+                    <div style="font-size: 2rem; font-weight: 900; line-height: 1.1; margin-top: 0.2rem;">${totalEpisodes}</div>
+                </div>
+            </div>
+            
+            <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--card-bg);">
+                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tempo Vitale Consumato</div>
+                <div style="display: flex; align-items: baseline; gap: 0.2rem; margin-top: 0.5rem;">
+                    <span style="font-size: 2.5rem; font-weight: 900; line-height: 1; color: var(--text);">${hours}</span>
+                    <span style="color: var(--text-muted); font-weight: 700; font-size: 1.2rem; margin-right: 0.5rem;">h</span>
+                    <span style="font-size: 2.5rem; font-weight: 900; line-height: 1; color: var(--text);">${remainingMinutes}</span>
+                    <span style="color: var(--text-muted); font-weight: 700; font-size: 1.2rem;">m</span>
+                </div>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; font-weight: 600;">Equivalgono a circa <strong style="color: var(--text);">${days} giorni</strong> ininterrotti.</p>
+            </div>
+        `;
+    } catch (e) {
+        console.error("[CRITICO] Fallimento rendering Stats:", e);
+        container.innerHTML = '<span style="color: var(--danger);">Impossibile calcolare le statistiche.</span>';
+    }
+}
+
+// Distruzione totale della serie da entrambi i database
+async function removeSeries(tvId) {
+    // Sostituiamo il confirm di sistema con la modale brutalista
+    const confirmation = await customConfirm("Vuoi davvero eliminare questa serie e tutti i suoi progressi dalla tua libreria?");
+    if (!confirmation) return;
+
+    try {
+        await UserLibrary.removeItem(String(tvId));
+        await TmdbCache.removeItem(String(tvId));
+        
+        console.log(`[SYS] Serie ${tvId} annientata con successo.`);
+        
+        // Chiude la vista dettaglio forzando il ritorno alla libreria
+        switchTab('library');
+    } catch (error) {
+        console.error("[CRITICO] Fallimento durante l'eliminazione:", error);
+        alert("Errore critico durante la rimozione dal database.");
+    }
+}
+
 // Ascoltatore di sistema per l'aggiornamento reattivo dell'interfaccia
 document.addEventListener('seasonSyncCompleted', (event) => {
     const { syncedTvId } = event.detail;
@@ -474,5 +721,14 @@ document.addEventListener('seasonSyncCompleted', (event) => {
     }
 });
 
+// Registrazione del Service Worker per la modalità Offline vera
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('[SYS] Service Worker registrato con successo.', reg.scope))
+            .catch(err => console.error('[CRITICO] Registrazione Service Worker fallita:', err));
+    });
+}
+
 // Inizializzazione dell'app al caricamento
-renderLibrary();
+switchTab('home');

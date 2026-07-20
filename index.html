@@ -1,82 +1,260 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="it" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SetFree TV - Core Engine</title>
+    <link rel="manifest" href="./manifest.json">
+    <title>SetFree TV</title>
     <style>
-        body {
-            background-color: #18181b;
-            color: #fafafa;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 2rem;
-            line-height: 1.6;
+        :root {
+            /* TEMA CHIARO */
+            --primary: #000000;
+            --primary-hover: #333333;
+            --primary-text: #ffffff; 
+            --danger: #860404;
+            --success: #15803d;
+            --bg: #f4f4f5;
+            --card-bg: #ffffff;
+            --text: #171717;
+            --text-muted: #52525b;
+            --border: #e4e4e7;
+            --input-bg: #e5e5e5;
+            --radius: 6px;
         }
-        .monitor {
-            background-color: #000;
-            border: 1px solid #3f3f46;
-            padding: 1.5rem;
-            border-radius: 6px;
-            font-family: monospace;
-            color: #4ade80;
+
+        [data-theme="dark"] {
+            /* TEMA SCURO */
+            --primary: #ffffff;
+            --primary-hover: #d4d4d8;
+            --primary-text: #000000;
+            --danger: #ef4444;
+            --success: #10b981;
+            --bg: #09090b; 
+            --card-bg: #18181b; 
+            --text: #fafafa;
+            --text-muted: #a1a1aa;
+            --border: #3f3f46;
+            --input-bg: #27272a;
         }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
+        body { background-color: var(--bg); color: var(--text); line-height: 1.6; }
+        
+        /* NAVIGAZIONE */
+        nav { background: var(--card-bg); padding: 1rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .nav-container { max-width: 800px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+        .nav-links { display: flex; gap: 0.25rem; }
+        .nav-utils { display: flex; gap: 0.5rem; align-items: center; }
+        
+        nav button { background: none; border: none; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); cursor: pointer; padding: 0.5rem 0.6rem; border-radius: 8px; transition: background-color 0.2s, color 0.2s; white-space: nowrap; }
+        nav button:hover { color: var(--text); background: var(--input-bg); }
+        nav button.active { background: var(--primary); color: var(--primary-text); }
+        
+        .nav-utils button { padding: 0.4rem; border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--text); }
+        .nav-utils button:hover { background: var(--input-bg); }
+
+        /* LAYOUT GLOBALE */
+        main { max-width: 800px; margin: 2rem auto; padding: 0 1rem; min-height: 80vh; }
+        .view { display: none; animation: fadeIn 0.2s ease-in-out; }
+        .view.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        h1, h2, h3 { color: var(--text); font-weight: 800; margin-bottom: 1rem; }
+        .card { background: var(--card-bg); padding: 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
+        
+        /* UI COMPONENTS */
+        .btn { background: var(--primary); color: var(--primary-text); border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-outline { background: transparent; border: 1.5px solid var(--text); color: var(--text); }
+        .btn-outline:hover { background: var(--input-bg); }
+        .btn-small { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+        
+        input { padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; background-color: var(--input-bg); color: var(--text); outline: none; }
+        input:focus { border-color: var(--primary); }
+
+       /* GRID LIBRERIA COMPATTA */
+        .library-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(95px, 1fr)); 
+            gap: 0.6rem; 
+        }
+        .series-card { 
+            background: var(--card-bg); 
+            border: 1.5px solid var(--border); 
+            border-radius: var(--radius); 
+            overflow: hidden; 
+            cursor: pointer; 
+            transition: transform 0.15s, border-color 0.15s; 
+        }
+        .series-card:hover { 
+            transform: translateY(-2px); 
+            border-color: var(--primary); 
+        }
+        .series-card img { 
+            width: 100%; 
+            aspect-ratio: 2/3; 
+            object-fit: cover; 
+            display: block; 
+            border-bottom: 1px solid var(--border); 
+        }
+        .series-card-content { 
+            padding: 0.4rem 0.5rem; 
+        }
+        .series-title { 
+            font-weight: 800; 
+            font-size: 0.75rem; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            display: block; 
+            line-height: 1.2;
+        }
+        .series-status { 
+            font-size: 0.65rem; 
+            color: var(--text-muted); 
+            display: block; 
+            margin-top: 0.15rem; 
+            text-transform: uppercase; 
+            font-weight: 700;
+        }
+
+        /* LISTA EPISODI */
+        .season-block { background: var(--input-bg); padding: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
+        .season-title { color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+        .episode-row { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
+        .episode-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .ep-title { color: var(--text); font-size: 0.95rem; font-weight: 600; }
+        .ep-title.watched { color: var(--text-muted); text-decoration: line-through; }
+        .ep-num { color: var(--text-muted); width: 25px; display: inline-block; }
+
+        /* MODALE */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 9999; }
+        .modal-overlay.active { display: flex; }
+        .modal-card { background: var(--card-bg); padding: 2rem; border-radius: var(--radius); width: 90%; max-width: 400px; border: 1px solid var(--border); }
+        
+        /* FOOTER */
+        footer { text-align: center; padding: 2rem 1rem; border-top: 1px solid var(--border); margin-top: 3rem; color: var(--text-muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
     </style>
 </head>
 <body>
-    <div style="max-width: 600px; margin: 0 auto;">
-        <h1 style="text-transform: uppercase; letter-spacing: -1px;">Motore Dati Offline</h1>
-        <div class="monitor">
-            > Sistema inizializzato.<br>
-            > L'interfaccia grafica è disabilitata.<br>
-            > Apri la Console Sviluppatore del browser (F12) per leggere l'esito del test di rete e storage.
-        </div>
-        <div style="margin-top: 2rem; padding: 1.5rem; border: 1px solid #3f3f46; border-radius: 6px; background-color: #09090b;">
-            <h3 style="margin-top: 0; color: #f4f4f5;">Cerca Serie</h3>
-            <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="search-input" placeholder="Es: Scissione..." style="flex: 1; padding: 0.5rem; background: #27272a; color: white; border: 1px solid #52525b; border-radius: 4px;">
-                <button onclick="searchSeries()" style="padding: 0.5rem 1rem; background: #fafafa; color: #18181b; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Cerca</button>
+
+    <!-- NAVBAR -->
+    <nav>
+        <div class="nav-container">
+            <!-- TITOLO / LOGO -->
+            <div style="font-weight: 900; font-size: 1.2rem; letter-spacing: -1px; color: var(--text); display: flex; align-items: center;">
+                SetFree TV
             </div>
             
-            <div id="search-results" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;"></div>
-        </div>
-        <!-- Cruscotto Libreria -->
-        <div style="margin-top: 2rem; padding: 1.5rem; border: 1px solid #3f3f46; border-radius: 6px; background-color: #09090b;">
-            <h3 style="margin-top: 0; color: #f4f4f5; border-bottom: 1px solid #3f3f46; padding-bottom: 0.5rem;">La Mia Libreria</h3>
+            <!-- LINK CENTRALI AGGIORNATI -->
+            <div class="nav-links">
+                <button onclick="switchTab('home')" id="nav-home" class="active">Home</button>
+                <button onclick="switchTab('library')" id="nav-library">Libreria</button>
+                <button onclick="switchTab('search')" id="nav-search">Ricerca</button>
+                <button onclick="switchTab('stats')" id="nav-stats">Stats</button>
+            </div>
             
-            <!-- La Griglia Asincrona -->
-            <div id="library-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; margin-top: 1rem;">
-                <!-- I dati verranno iniettati qui dal controller -->
+            <!-- UTILS DESTRA -->
+            <div class="nav-utils">
+                <button onclick="openSettings()" title="Impostazioni">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
             </div>
         </div>
-        <!-- Gestione Dati e Backup -->
-        <div style="margin-top: 2rem; padding: 1.5rem; border: 1px solid #3f3f46; border-radius: 6px; background-color: #18181b;">
-            <h3 style="margin-top: 0; color: #f4f4f5; font-size: 1rem;">Manutenzione Dati (Backup)</h3>
-            <p style="color: #a1a1aa; font-size: 0.85rem; margin-bottom: 1rem;">I tuoi dati risiedono solo su questo dispositivo. Esporta regolarmente il backup per non perdere i progressi.</p>
-            <div style="display: flex; gap: 1rem;">
-                <button onclick="exportData()" style="padding: 0.5rem 1rem; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Esporta JSON</button>
-                
-                <label style="padding: 0.5rem 1rem; background: #27272a; color: white; border: 1px solid #52525b; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">
-                    Importa JSON
-                    <input type="file" accept=".json" onchange="importData(event)" style="display: none;">
-                </label>
+    </nav>
+
+    <main>
+        <!-- VISTA: HOME (Nuova) -->
+        <section id="view-home" class="view active card">
+            <h2>Cruscotto</h2>
+            <div id="home-content"></div>
+        </section>
+
+        <!-- VISTA: LIBRERIA -->
+        <section id="view-library" class="view">
+            <h2>La Mia Libreria</h2>
+            <div id="library-grid" class="library-grid"></div>
+        </section>
+
+        <!-- VISTA: RICERCA -->
+        <section id="view-search" class="view card">
+            <h2>Cerca Serie</h2>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <input type="text" id="search-input" placeholder="Es: Scissione...">
+                <button class="btn" onclick="searchSeries()">Cerca</button>
             </div>
-        </div>
-        <!-- Vista Dettaglio Serie (Nascosta di default) -->
-        <div id="detail-view" style="display: none; margin-top: 2rem; padding: 1.5rem; border: 1px solid #3f3f46; border-radius: 6px; background-color: #09090b;">
-            <button onclick="closeDetailView()" style="margin-bottom: 1.5rem; padding: 0.5rem 1rem; background: #fafafa; color: #18181b; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">← Torna Indietro</button>
-            <div id="detail-content">
-                <!-- I dati degli episodi verranno iniettati qui -->
+            <div id="search-results" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </section>
+
+        <!-- VISTA: STATISTICHE (Nuova) -->
+        <section id="view-stats" class="view card">
+            <h2>Le Tue Statistiche</h2>
+            <div id="stats-content"></div>
+        </section>
+
+        <!-- VISTA: DETTAGLIO SERIE -->
+        <section id="view-detail" class="view card">
+            <button class="btn btn-outline btn-small" onclick="switchTab('library')" style="margin-bottom: 1.5rem;">← Torna Indietro</button>
+            <div id="detail-content"></div>
+        </section>
+    </main>
+
+    <!-- FOOTER -->
+    <footer>
+        SetFree TV<br>
+        Copyright &copy; 2026 Alessandro Darie
+    </footer>
+
+    <!-- MODALE IMPOSTAZIONI -->
+    <div id="modal-settings" class="modal-overlay" onclick="closeSettings(event)">
+        <div class="modal-card" onclick="event.stopPropagation()">
+            <h3 style="margin-top: 0; margin-bottom: 1.5rem; text-transform: uppercase; border-bottom: 2px solid var(--text); padding-bottom: 0.5rem; font-weight: 900;">Impostazioni App</h3>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
+                <strong style="font-size: 1.1rem;">Tema Scuro</strong>
+                <button class="btn btn-outline btn-small" id="btn-toggle-theme" onclick="toggleTheme()" style="min-width: 70px; font-weight: 900;">ON</button>
+            </div>
+
+            <div style="margin-bottom: 1.5rem;">
+                <strong style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Database & Archiviazione</strong>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700;" onclick="closeSettings(null, true); exportData();">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        Esporta Dati
+                    </button>
+                    <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700;" onclick="closeSettings(null, true); document.getElementById('import-file').click();">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Importa Dati
+                    </button>
+                    <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn" style="width: 100%; font-size: 1.1rem; padding: 1rem; font-weight: 800;" onclick="closeSettings(null, true)">Chiudi</button>
             </div>
         </div>
     </div>
 
-    <!-- 1. Importazione del motore IndexedDB -->
+    <!-- MODALE CONFERMA (Brutalista) -->
+    <div id="modal-confirm" class="modal-overlay">
+        <div class="modal-card" style="text-align: center; border-color: var(--danger); border-width: 2px;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem; text-transform: uppercase; font-weight: 900; color: var(--danger); letter-spacing: -0.5px;">Azione Irreversibile</h3>
+            <p id="modal-confirm-message" style="margin-bottom: 1.5rem; font-weight: 600; font-size: 0.95rem;"></p>
+            <div style="display: flex; gap: 1rem; justify-content: center;">
+                <button id="btn-confirm-cancel" class="btn btn-outline" style="flex: 1; font-weight: 800;">Annulla</button>
+                <button id="btn-confirm-ok" class="btn btn-danger" style="flex: 1; font-weight: 800;">Elimina</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
-
-    <!-- 2. Variabili d'ambiente e API (Il Ponte) -->
     <script src="api-config.js"></script>
-
-    <!-- 3. Logica del database e chiamate di rete (I Silos) -->
     <script src="app.js"></script>
 </body>
 </html>
