@@ -726,7 +726,15 @@ async function openDetailView(tvId) {
             `;
 
             if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
-                html += `<div class="card" style="border-color: var(--danger);"><p style="color: var(--danger); font-weight: bold; margin:0;">Sincronizzazione in corso... Attendi qualche secondo e riapri la scheda.</p></div>`;
+                html += `
+                    <div class="card" style="border-color: var(--danger); display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
+                        <div style="width: 24px; height: 24px; border: 3px solid var(--danger); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>
+                        <p style="color: var(--danger); font-weight: 800; margin:0; font-size: 0.95rem; line-height: 1.3;">
+                            Sincronizzazione stagioni in corso...<br>
+                            <span style="font-size: 0.8rem; font-weight: 600; opacity: 0.8;">Attendi qualche secondo, l'interfaccia si aggiornerà da sola.</span>
+                        </p>
+                    </div>
+                `;
             } else {
                 const today = new Date().toISOString().split('T')[0];
 
@@ -1458,7 +1466,14 @@ async function silentCacheUpdate() {
 // ==========================================
 
 document.addEventListener('seasonSyncCompleted', (event) => {
-    // ... il tuo codice esistente ...
+    const { syncedTvId } = event.detail;
+    const detailView = document.getElementById('view-detail');
+
+    // Se l'utente sta guardando la scheda proprio mentre il download finisce, la rigeneriamo chirurgicamente
+    if (detailView.classList.contains('active') && window.currentOpenTvId === String(syncedTvId)) {
+        console.log(`[SYS] Reattività innescata per ID ${syncedTvId}. Rigenero la UI automaticamente.`);
+        openDetailView(syncedTvId);
+    }
 });
 
 if ('serviceWorker' in navigator) {
@@ -1466,7 +1481,8 @@ if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js')
             .then(reg => console.log('[SYS] Service Worker registrato con successo.', reg.scope))
             .catch(err => console.error('[CRITICO] Registrazione Service Worker fallita:', err));
-
+            
+        // Innesco del motore TTL per la cache obsoleta
         setTimeout(silentCacheUpdate, 5000);
     });
 }
