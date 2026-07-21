@@ -54,7 +54,7 @@ async function searchSeries() {
             return;
         }
 
-        data.results.slice(0, 5).forEach(series => {
+        data.results.slice(0, 8).forEach(series => {
             const year = series.first_air_date ? series.first_air_date.substring(0, 4) : 'N/A';
             const item = document.createElement('div');
             item.className = 'card';
@@ -64,11 +64,12 @@ async function searchSeries() {
             item.style.padding = '1rem';
             item.style.marginBottom = '0';
             
+            // Bottone "Apri" invece di "Traccia"
             item.innerHTML = `
                 <div>
                     <strong>${series.name}</strong> <span style="color: var(--text-muted); font-size: 0.9em;">(${year})</span>
                 </div>
-                <button class="btn btn-success btn-small" onclick="addSeriesToLibraryFromSearch(${series.id})">Traccia</button>
+                <button class="btn btn-outline btn-small" onclick="previewSeries(${series.id})">Apri</button>
             `;
             resultsContainer.appendChild(item);
         });
@@ -78,49 +79,59 @@ async function searchSeries() {
     }
 }
 
-async function addSeriesToLibraryFromSearch(tvId) {
-    if (!tvId) return;
+// Apre l'anteprima velocemente caricando solo i dati principali
+async function previewSeries(tvId) {
+    const loader = document.getElementById('global-loader');
+    loader.classList.add('active'); // Attiva blur e rotella
 
     try {
-        console.log(`[SYS] Inizio procedura di tracciamento per ID: ${tvId}...`);
-
-        const existingEntry = await UserLibrary.getItem(String(tvId));
-        if (existingEntry) {
-            await customAlert(`La serie è già presente nella tua libreria.`);
-            return; 
+        let tmdbData = await TmdbCache.getItem(String(tvId));
+        if (!tmdbData) {
+            const url = TMDB_CONFIG.buildTvUrl(tvId);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("API irraggiungibile");
+            tmdbData = await response.json();
+            tmdbData.last_updated = Date.now();
+            await TmdbCache.setItem(String(tvId), tmdbData);
         }
-
-        const url = TMDB_CONFIG.buildTvUrl(tvId);
-        const response = await fetch(url);
         
-        if (!response.ok) throw new Error(`Serie non trovata o errore di rete (Status: ${response.status})`);
-        
-        const tmdbData = await response.json();
+        openDetailView(tvId);
+        switchTab('detail');
+    } catch (error) {
+        console.error(error);
+        await customAlert("Errore durante il caricamento dell'anteprima.");
+    } finally {
+        loader.classList.remove('active'); // Spegne il loader in ogni caso
+    }
+}
 
-        tmdbData.last_updated = Date.now();
-        await TmdbCache.setItem(String(tvId), tmdbData);
+// Converte un'anteprima in una serie tracciata e fa partire il download pesante
+async function addToLibraryFromPreview(tvId) {
+    try {
+        const tmdbData = await TmdbCache.getItem(String(tvId));
+        if (!tmdbData) return;
 
         const userSeriesModel = {
             id: tvId,
-            status: "watching",
+            status: "watching", // Stato di default: in corso
             added_at: Date.now(),
             watched_count: 0,
             watched_minutes: 0,
-            progress: {} 
+            progress: {},
+            is_favorite: false
         };
         
         await UserLibrary.setItem(String(tvId), userSeriesModel);
-        console.log(`[SUCCESSO] "${tmdbData.name}" aggiunta alla libreria utente!`);
+        console.log(`[SUCCESSO] "${tmdbData.name}" inizializzata in libreria!`);
         
-        document.getElementById('search-input').value = '';
-        document.getElementById('search-results').innerHTML = '';
-
-        renderLibrary();
-        
+        // Risveglia il download asincrono in background
         if (tmdbData.seasons && tmdbData.seasons.length > 0) {
             backgroundSeasonSync(tvId, tmdbData.seasons);
         }
 
+        // Ricarica la vista dettaglio (passerà automaticamente da Anteprima a Modalità Piena)
+        openDetailView(tvId);
+        
     } catch (error) {
         console.error("[CRITICO] Fallimento durante l'aggiunta:", error);
         await customAlert("Errore critico durante l'aggiunta della serie.");
@@ -169,60 +180,169 @@ async function backgroundSeasonSync(tvId, seasonsList) {
 
 async function renderHome() {
     const container = document.getElementById('home-content');
-    container.innerHTML = '<span style="color: var(--text-muted);">Lettura progressi...</span>';
-    
+    container.innerHTML = '<span style="color: var(--text-muted);">Scansione database in corso...</span>';
+
     try {
         const keys = await UserLibrary.keys();
         if(keys.length === 0) {
             container.innerHTML = `
-                <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie nella tua libreria.</p>
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">La tua dashboard è vuota. Nessuna serie tracciata.</p>
                 <button class="btn btn-success" onclick="switchTab('search')">Cerca una serie</button>
             `;
             return;
         }
-        
-        let lastWatchedSeries = null;
-        let lastWatchedTime = 0;
-        
+
+        let inProgressHTML = '';
+        let activeSeriesCount = 0;
+
         for (const key of keys) {
             const userSeries = await UserLibrary.getItem(key);
-            if(userSeries.progress) {
-                for(const ep in userSeries.progress) {
-                    if(userSeries.progress[ep] > lastWatchedTime) {
-                        lastWatchedTime = userSeries.progress[ep];
-                        lastWatchedSeries = userSeries;
+            
+            // Ignora se non iniziata
+            if (!userSeries.progress || Object.keys(userSeries.progress).length === 0) continue;
+
+            const tmdbData = await TmdbCache.getItem(key);
+            if (!tmdbData || !tmdbData.detailed_seasons) continue;
+
+            let nextEpisode = null;
+            let epRuntime = 45;
+
+            // Logica di ricerca lineare (Stagioni ed Episodi)
+            const seasonNumbers = Object.keys(tmdbData.detailed_seasons).map(Number).sort((a,b) => a - b);
+            
+            for (const sNum of seasonNumbers) {
+                const season = tmdbData.detailed_seasons[sNum];
+                if (season.episodes) {
+                    const episodes = [...season.episodes].sort((a,b) => a.episode_number - b.episode_number);
+                    for (const ep of episodes) {
+                        const epKey = `S${String(sNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                        
+                        if (!userSeries.progress[epKey]) {
+                            nextEpisode = { key: epKey, name: ep.name };
+                            epRuntime = ep.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
+                            break;
+                        }
                     }
                 }
+                if (nextEpisode) break;
+            }
+
+            if (nextEpisode) {
+                activeSeriesCount++;
+                
+                // Recupero dell'immagine di copertina
+                const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
+
+                // Blocco UI ad alta densità
+                inProgressHTML += `
+                    <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
+                        
+                        <!-- Immagine di Copertina (Sinistra) -->
+                        <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${tmdbData.name}">
+                        
+                        <!-- Contenuto Operativo (Destra) -->
+                        <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+                            
+                            <div>
+                                <!-- Titolo e Codice Episodio -->
+                                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                    <strong style="font-size: 0.95rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
+                                        ${tmdbData.name}
+                                    </strong>
+                                    <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
+                                        ${nextEpisode.key}
+                                    </span>
+                                </div>
+                                
+                                <!-- Nome Episodio -->
+                                <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
+                                    ${nextEpisode.name}
+                                </div>
+                            </div>
+
+                            <!-- Azioni Rapide -->
+                            <div style="display: flex; gap: 0.5rem; margin-top: auto;">
+                                <button class="btn btn-success" style="flex: 1; padding: 0.25rem; font-size: 0.8rem; font-weight: 800;" onclick="markNextEpisodeWatched('${key}', '${nextEpisode.key}', ${epRuntime})">
+                                    VISTO
+                                </button>
+                                <button class="btn btn-outline" style="padding: 0.25rem 0.6rem;" onclick="openDetailView('${key}'); switchTab('detail');" title="Dettagli">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
             }
         }
-        
-        if(!lastWatchedSeries) {
+
+        if (activeSeriesCount === 0) {
             container.innerHTML = `
-                <p style="color: var(--text-muted); margin-bottom: 1rem;">Hai aggiunto serie alla libreria, ma non hai ancora segnato nessun episodio come visto.</p>
-                <button class="btn" onclick="switchTab('library')">Apri la Libreria</button>
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie attiva al momento. Le serie in corso appariranno qui.</p>
+                <button class="btn" onclick="switchTab('library')">Sfoglia Libreria</button>
             `;
-            return;
+        } else {
+            container.innerHTML = `
+                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem; letter-spacing: 0.5px;">Da continuare</p>
+                ${inProgressHTML}
+            `;
         }
-        
-        const tmdbData = await TmdbCache.getItem(String(lastWatchedSeries.id));
-        const dateStr = new Date(lastWatchedTime).toLocaleDateString('it-IT');
-        
-        container.innerHTML = `
-            <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.5rem; letter-spacing: 0.5px;">Visto di recente (${dateStr})</p>
-            <div style="border: 1.5px solid var(--text); border-left: 8px solid var(--primary); padding: 1.25rem; background: var(--input-bg); display: flex; justify-content: space-between; align-items: center;">
-                <strong style="font-size: 1.1rem; text-transform: uppercase; line-height: 1.2;">${tmdbData ? tmdbData.name : 'Dati mancanti'}</strong>
-                <button class="btn btn-success btn-small" onclick="openDetailView(${lastWatchedSeries.id}); switchTab('detail');">Continua</button>
-            </div>
-        `;
+
     } catch (e) {
         console.error("[CRITICO] Fallimento rendering Home:", e);
-        container.innerHTML = '<span style="color: var(--danger);">Errore nel caricamento del cruscotto.</span>';
+        container.innerHTML = '<span style="color: var(--danger);">Errore nel calcolo del cruscotto operativo.</span>';
     }
 }
 
-async function renderLibrary() {
+// Motore chirurgico per l'avanzamento rapido direttamente dalla Home
+async function markNextEpisodeWatched(tvId, epKey, epRuntime) {
+    try {
+        const userSeries = await UserLibrary.getItem(String(tvId));
+        if (!userSeries) return;
+
+        // Inizializza l'oggetto progressi se corrotto
+        if (!userSeries.progress) userSeries.progress = {};
+
+        // Iniezione dei dati contabili
+        userSeries.progress[epKey] = Date.now();
+        userSeries.watched_count = (userSeries.watched_count || 0) + 1;
+        userSeries.watched_minutes = (userSeries.watched_minutes || 0) + epRuntime;
+
+        // Chiusura transazione
+        await UserLibrary.setItem(String(tvId), userSeries);
+
+        // Feedback in console e re-render istantaneo del cruscotto
+        console.log(`[SYS] Progresso rapido: ${tvId} -> ${epKey}`);
+        
+        // Questo riavvia il calcolo della Home: l'episodio appena cliccato 
+        // verrà ignorato e il sistema pescherà automaticamente quello dopo.
+        renderHome();
+        
+    } catch (error) {
+        console.error("[CRITICO] Fallimento operazione rapida:", error);
+        await customAlert("Errore critico durante il salvataggio.");
+    }
+}
+
+// Utilità per calcolare l'ultima interazione assoluta (per l'ordinamento)
+function getLastInteraction(userSeries) {
+    if (!userSeries.progress || Object.keys(userSeries.progress).length === 0) {
+        return userSeries.added_at || 0; // Se non ha episodi visti, usa la data di aggiunta
+    }
+    return Math.max(...Object.values(userSeries.progress));
+}
+
+// Renderizza il cruscotto principale dell'utente con filtri e ordinamento
+async function renderLibrary(currentFilter = 'watching') {
     const grid = document.getElementById('library-grid');
-    grid.innerHTML = '<span style="color: var(--text-muted); grid-column: 1 / -1;">Caricamento libreria...</span>';
+    const filterButtons = document.querySelectorAll('#library-filters button');
+    
+    // Aggiorna UI dei bottoni filtro
+    filterButtons.forEach(btn => btn.classList.remove('active'));
+    // Trova il bottone cliccato in base al parametro e impostalo attivo
+    const activeBtnIndex = ['watching', 'planned', 'paused', 'completed', 'favorite'].indexOf(currentFilter);
+    if(activeBtnIndex >= 0) filterButtons[activeBtnIndex].classList.add('active');
+
+    grid.innerHTML = '<span style="color: var(--text-muted); grid-column: 1 / -1;">Estrazione e ordinamento dati...</span>';
 
     try {
         const keys = await UserLibrary.keys();
@@ -230,8 +350,10 @@ async function renderLibrary() {
             grid.innerHTML = '<span style="color: var(--text-muted); grid-column: 1 / -1; text-align: center; padding: 2rem 0;">La tua libreria è vuota. Cerca una serie per iniziare.</span>';
             return;
         }
-        grid.innerHTML = '';
 
+        let seriesArray = [];
+
+        // 1. Estrazione e arricchimento dati
         for (const key of keys) {
             const userSeries = await UserLibrary.getItem(key);
             let tmdbData = await TmdbCache.getItem(key);
@@ -245,24 +367,74 @@ async function renderLibrary() {
                     tmdbData.last_updated = Date.now();
                     await TmdbCache.setItem(key, tmdbData);
                     if (tmdbData.seasons && tmdbData.seasons.length > 0) backgroundSeasonSync(key, tmdbData.seasons);
-                } catch (e) {
-                    continue; 
-                }
+                } catch (e) { continue; }
             }
+            
+            // Garantiamo che status esista (retrocompatibilità)
+            if (!userSeries.status) userSeries.status = 'watching';
+            
+            seriesArray.push({
+                key: key,
+                user: userSeries,
+                tmdb: tmdbData,
+                lastInteraction: getLastInteraction(userSeries)
+            });
+        }
 
-            const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Image';
+        // 2. Ordinamento Spaziale (Dal più recente al meno recente)
+        seriesArray.sort((a, b) => b.lastInteraction - a.lastInteraction);
+
+        // 3. Filtraggio Logico
+        let filteredSeries = seriesArray.filter(item => {
+            const epsWatched = item.user.watched_count || 0;
+            const status = item.user.status;
+            
+            switch (currentFilter) {
+                case 'watching': return status === 'watching' && epsWatched > 0;
+                case 'planned': return status === 'watching' && epsWatched === 0;
+                case 'paused': return status === 'paused';
+                case 'completed': return status === 'completed';
+                case 'favorite': return item.user.is_favorite === true;
+                default: return true;
+            }
+        });
+
+        grid.innerHTML = '';
+
+        if (filteredSeries.length === 0) {
+            grid.innerHTML = `<span style="color: var(--text-muted); grid-column: 1 / -1; text-align: center; padding: 2rem 0;">Nessuna serie in questa categoria.</span>`;
+            return;
+        }
+
+        // 4. Rendering
+        for (const item of filteredSeries) {
+            const posterUrl = item.tmdb.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdb.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Image';
+            
+            // Etichetta visiva dello stato
+            let statusLabel = '';
+            let statusColor = 'var(--text-muted)';
+            if (item.user.status === 'completed') { statusLabel = 'COMPLETATA'; statusColor = 'var(--success)'; }
+            else if (item.user.status === 'paused') { statusLabel = 'IN PAUSA'; statusColor = 'var(--text)'; }
+            else if (item.user.watched_count === 0) { statusLabel = 'DA VEDERE'; }
+            else { statusLabel = 'IN CORSO'; statusColor = 'var(--primary)'; }
+
+            // Cuore rosso se preferita
+            const favBadge = item.user.is_favorite ? `<div style="position: absolute; top: 5px; right: 5px; background: var(--card-bg); border-radius: 50%; padding: 4px; border: 1px solid var(--danger); color: var(--danger); line-height: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>` : '';
+
             const card = document.createElement('div');
             card.className = 'series-card';
+            card.style.position = 'relative';
             card.onclick = () => {
-                openDetailView(userSeries.id);
+                openDetailView(item.user.id);
                 switchTab('detail'); 
             };
 
             card.innerHTML = `
-                <img src="${posterUrl}" alt="${tmdbData.name}">
+                ${favBadge}
+                <img src="${posterUrl}" alt="${item.tmdb.name}">
                 <div class="series-card-content">
-                    <span class="series-title" title="${tmdbData.name}">${tmdbData.name}</span>
-                    <span class="series-status">Stato: ${userSeries.status}</span>
+                    <span class="series-title" title="${item.tmdb.name}">${item.tmdb.name}</span>
+                    <span class="series-status" style="color: ${statusColor};">${statusLabel}</span>
                 </div>
             `;
             grid.appendChild(card);
@@ -344,79 +516,125 @@ async function openDetailView(tvId) {
     detailContent.innerHTML = '<span style="color: var(--text-muted);">Estrazione dati...</span>';
 
     try {
+        // userSeries potrebbe essere NULL se siamo in modalità anteprima
         const userSeries = await UserLibrary.getItem(String(tvId));
         const tmdbData = await TmdbCache.getItem(String(tvId));
-        if (!tmdbData || !userSeries) throw new Error("Dati mancanti.");
-
-        let html = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem;">${tmdbData.name}</h2>
-                <button class="btn btn-danger btn-small" onclick="removeSeries(${tvId})">Elimina</button>
-            </div>
-        `;
         
-        if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
-            html += `<div class="card" style="border-color: var(--danger);"><p style="color: var(--danger); font-weight: bold; margin:0;">Sincronizzazione in corso... Attendi qualche secondo e riapri la scheda.</p></div>`;
-            detailContent.innerHTML = html;
-            return;
+        if (!tmdbData) throw new Error("Dati TMDB mancanti.");
+
+        const isPreview = !userSeries; // Variabile di stato cruciale
+
+        const bannerUrl = tmdbData.backdrop_path 
+            ? `https://image.tmdb.org/t/p/w780${tmdbData.backdrop_path}` 
+            : (tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : '');
+
+        let bannerHTML = '';
+        if (bannerUrl) {
+            bannerHTML = `<div style="width: 100%; height: 160px; border: 1.5px solid var(--text); background: url('${bannerUrl}') center/cover; margin-bottom: 1.5rem; display: block;"></div>`;
         }
 
-        for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
-            const bodyId = `season-body-${tvId}-${seasonNum}`;
-            const numEpisodes = seasonData.episodes ? seasonData.episodes.length : 0;
+        // 1. HEADER (Il tasto elimina scompare in anteprima)
+        let html = `
+            ${bannerHTML}
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; gap: 1rem;">
+                <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${tmdbData.name}</h2>
+                ${!isPreview ? `<button class="btn btn-danger btn-small" style="flex-shrink: 0;" onclick="removeSeries(${tvId})">Elimina</button>` : ''}
+            </div>
             
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.5;">${tmdbData.overview || 'Nessuna sinossi disponibile.'}</p>
+        `;
+        
+        if (isPreview) {
+            // 2. MODALITÀ ANTEPRIMA: Niente plancia, solo bottone gigante
             html += `
-                <div style="border: 1.5px solid var(--text); border-left: 8px solid var(--primary); background: var(--card-bg); margin-bottom: 1rem; border-radius: 0;">
-                    
-                    <div onclick="const b = document.getElementById('${bodyId}'); b.style.display = b.style.display === 'none' ? 'block' : 'none';" 
-                         style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
-                        
-                        <div>
-                            <strong style="font-size: 1.2rem; text-transform: uppercase; display: block;">Stagione ${seasonNum}</strong>
-                            <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">
-                                ${numEpisodes} EPISODI <span style="font-size: 0.7rem; font-weight: 400; opacity: 0.7;">(Clicca per espandere)</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
-            `;
-            
-            if (seasonData.episodes && seasonData.episodes.length > 0) {
-                seasonData.episodes.forEach((ep, i) => {
-                    const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                    const isWatched = userSeries.progress && userSeries.progress[epKey];
-                    
-                    const titleClass = isWatched ? 'ep-title watched' : 'ep-title';
-                    const titleStyle = isWatched ? 'color: var(--text-muted); text-decoration: line-through;' : 'color: var(--text);';
-                    const btnClass = isWatched ? 'btn btn-success btn-small' : 'btn btn-outline btn-small';
-                    const btnText = isWatched ? 'Visto' : 'Segna come visto';
-                    
-                    const isLast = i === seasonData.episodes.length - 1;
-                    const borderBottom = isLast ? '' : 'border-bottom: 1px solid var(--border);';
-
-                    html += `
-                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 0; ${borderBottom}">
-                            <div style="padding-right: 1rem;">
-                                <span id="title-${tvId}-${epKey}" class="${titleClass}" style="display: block; font-size: 1rem; font-weight: 700; ${titleStyle}">
-                                    <span style="color: var(--text-muted); display: inline-block; width: 28px;">${ep.episode_number}.</span> 
-                                    ${ep.name}
-                                </span>
-                            </div>
-                            <button id="btn-${tvId}-${epKey}" class="${btnClass}" style="white-space: nowrap; flex-shrink: 0;" onclick="toggleEpisode(${tvId}, '${epKey}')">
-                                ${btnText}
-                            </button>
-                        </div>
-                    `;
-                });
-            } else {
-                html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio trovato.</div>`;
-            }
-            
-            html += `
-                    </div>
+                <div style="margin-bottom: 1.5rem; background: var(--input-bg); padding: 1.25rem; border: 1.5px solid var(--primary); text-align: center;">
+                    <p style="margin-bottom: 1rem; color: var(--text-muted); font-weight: 700; font-size: 0.85rem; text-transform: uppercase;">Questa serie non è tracciata</p>
+                    <button class="btn btn-success" style="width: 100%; font-size: 1.1rem; padding: 1rem; font-weight: 900;" onclick="addToLibraryFromPreview(${tvId})">AGGIUNGI ALLA LIBRERIA</button>
                 </div>
             `;
+        } else {
+            // 3. MODALITÀ TRACCIATA: Plancia di controllo e rendering stagioni
+            const isFav = userSeries.is_favorite === true;
+            const favIconFill = isFav ? 'currentColor' : 'none';
+            const favColor = isFav ? 'var(--danger)' : 'var(--text-muted)';
+            const favBorder = isFav ? 'var(--danger)' : 'var(--border)';
+            const currentStatus = userSeries.status || 'watching';
+
+            html += `
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; background: var(--input-bg); padding: 0.75rem; border: 1.5px solid var(--text);">
+                    <select id="status-select-${tvId}" onchange="changeSeriesStatus(${tvId}, this.value)" style="flex: 1; padding: 0.5rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-weight: 700; text-transform: uppercase; font-size: 0.8rem; outline: none;">
+                        <option value="watching" ${currentStatus === 'watching' ? 'selected' : ''}>In Corso / Da Vedere</option>
+                        <option value="paused" ${currentStatus === 'paused' ? 'selected' : ''}>In Pausa</option>
+                        <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Completata</option>
+                    </select>
+                    
+                    <button onclick="toggleFavorite(${tvId})" class="btn btn-outline" style="padding: 0.5rem 1rem; color: ${favColor}; border-color: ${favBorder};">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="${favIconFill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                    </button>
+                </div>
+            `;
+
+            if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
+                html += `<div class="card" style="border-color: var(--danger);"><p style="color: var(--danger); font-weight: bold; margin:0;">Sincronizzazione in corso... Attendi qualche secondo e riapri la scheda.</p></div>`;
+            } else {
+                for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
+                    const bodyId = `season-body-${tvId}-${seasonNum}`;
+                    const numEpisodes = seasonData.episodes ? seasonData.episodes.length : 0;
+                    
+                    html += `
+                        <div style="border: 1.5px solid var(--text); border-left: 8px solid var(--primary); background: var(--card-bg); margin-bottom: 1rem; border-radius: 0;">
+                            
+                            <div onclick="const b = document.getElementById('${bodyId}'); b.style.display = b.style.display === 'none' ? 'block' : 'none';" 
+                                 style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
+                                
+                                <div>
+                                    <strong style="font-size: 1.2rem; text-transform: uppercase; display: block;">Stagione ${seasonNum}</strong>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">
+                                        ${numEpisodes} EPISODI <span style="font-size: 0.7rem; font-weight: 400; opacity: 0.7;">(Clicca per espandere)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
+                    `;
+                    
+                    if (seasonData.episodes && seasonData.episodes.length > 0) {
+                        seasonData.episodes.forEach((ep, i) => {
+                            const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                            const isWatched = userSeries.progress && userSeries.progress[epKey];
+                            
+                            const titleClass = isWatched ? 'ep-title watched' : 'ep-title';
+                            const titleStyle = isWatched ? 'color: var(--text-muted); text-decoration: line-through;' : 'color: var(--text);';
+                            const btnClass = isWatched ? 'btn btn-success btn-small' : 'btn btn-outline btn-small';
+                            const btnText = isWatched ? 'Visto' : 'Segna come visto';
+                            
+                            const isLast = i === seasonData.episodes.length - 1;
+                            const borderBottom = isLast ? '' : 'border-bottom: 1px solid var(--border);';
+
+                            html += `
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 0; ${borderBottom}">
+                                    <div style="padding-right: 1rem;">
+                                        <span id="title-${tvId}-${epKey}" class="${titleClass}" style="display: block; font-size: 1rem; font-weight: 700; ${titleStyle}">
+                                            <span style="color: var(--text-muted); display: inline-block; width: 28px;">${ep.episode_number}.</span> 
+                                            ${ep.name}
+                                        </span>
+                                    </div>
+                                    <button id="btn-${tvId}-${epKey}" class="${btnClass}" style="white-space: nowrap; flex-shrink: 0;" onclick="toggleEpisode(${tvId}, '${epKey}')">
+                                        ${btnText}
+                                    </button>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio trovato.</div>`;
+                    }
+                    
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                }
+            }
         }
         detailContent.innerHTML = html;
 
@@ -491,6 +709,43 @@ async function removeSeries(tvId) {
     } catch (error) {
         console.error("[CRITICO] Fallimento durante l'eliminazione:", error);
         await customAlert("Errore critico durante la rimozione dal database.");
+    }
+}
+
+// ==========================================
+// GESTIONE STATO E PREFERITI
+// ==========================================
+
+async function changeSeriesStatus(tvId, newStatus) {
+    try {
+        const userSeries = await UserLibrary.getItem(String(tvId));
+        if (!userSeries) return;
+        
+        userSeries.status = newStatus;
+        await UserLibrary.setItem(String(tvId), userSeries);
+        console.log(`[SYS] Stato aggiornato per ${tvId}: ${newStatus}`);
+        
+        // Forza l'aggiornamento in background della Home se abbiamo messo in pausa o completato
+        renderHome();
+    } catch (error) {
+        console.error("[CRITICO] Fallimento cambio stato:", error);
+    }
+}
+
+async function toggleFavorite(tvId) {
+    try {
+        const userSeries = await UserLibrary.getItem(String(tvId));
+        if (!userSeries) return;
+        
+        userSeries.is_favorite = !userSeries.is_favorite;
+        await UserLibrary.setItem(String(tvId), userSeries);
+        
+        console.log(`[SYS] Preferito aggiornato per ${tvId}: ${userSeries.is_favorite}`);
+        
+        // Ricarica chirurgicamente solo la vista dettaglio per aggiornare l'icona
+        openDetailView(tvId);
+    } catch (error) {
+        console.error("[CRITICO] Fallimento aggiornamento preferito:", error);
     }
 }
 

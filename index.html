@@ -178,6 +178,16 @@
         <!-- VISTA: LIBRERIA -->
         <section id="view-library" class="view">
             <h2>La Mia Libreria</h2>
+            
+            <!-- FILTRI LIBRERIA -->
+            <div id="library-filters" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none;">
+                <button class="btn btn-small btn-outline active" onclick="renderLibrary('watching')">In Corso</button>
+                <button class="btn btn-small btn-outline" onclick="renderLibrary('planned')">Da Vedere</button>
+                <button class="btn btn-small btn-outline" onclick="renderLibrary('paused')">In Pausa</button>
+                <button class="btn btn-small btn-outline" onclick="renderLibrary('completed')">Viste</button>
+                <button class="btn btn-small btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="renderLibrary('favorite')">❤ Preferite</button>
+            </div>
+
             <div id="library-grid" class="library-grid"></div>
         </section>
 
@@ -256,5 +266,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <script src="api-config.js"></script>
     <script src="app.js"></script>
+
+    <!-- LOADER GLOBALE -->
+    <div id="global-loader" class="modal-overlay" style="z-index: 10000; flex-direction: column; gap: 1rem;">
+        <div style="width: 50px; height: 50px; border: 5px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        <strong style="color: white; font-weight: 900; letter-spacing: 1px;">CARICAMENTO...</strong>
+        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+    </div>
+    
 </body>
 </html>
