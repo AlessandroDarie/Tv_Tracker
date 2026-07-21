@@ -184,7 +184,7 @@ async function backgroundSeasonSync(tvId, seasonsList) {
 // VISTE PRINCIPALI (HOME, LIBRERIA, STATS)
 // ==========================================
 
-async function renderHome() {
+ async function renderHome() {
     currentContext = 'home';
     const container = document.getElementById('home-content');
     container.innerHTML = '<span style="color: var(--text-muted);">Scansione database in corso...</span>';
@@ -199,13 +199,12 @@ async function renderHome() {
             return;
         }
 
-        let inProgressHTML = '';
-        let upcomingHTML = '';
-        let activeCount = 0;
-        let upcomingCount = 0;
-
+        // 1. STRUTTURE DATI DI RACCOLTA (Separazione tra Dati e UI)
+        const activeSeriesList = [];
+        const upcomingSeriesList = [];
         const today = new Date().toISOString().split('T')[0];
 
+        // 2. MOTORE DI ESTRAZIONE
         for (const key of keys) {
             const userSeries = await UserLibrary.getItem(key);
             
@@ -218,7 +217,6 @@ async function renderHome() {
             let targetEpisode = null;
             let isUpcoming = false;
             let epRuntime = 45;
-
             let maxS = 0;
             let maxE = 0;
             
@@ -243,27 +241,13 @@ async function renderHome() {
                     if (nextEpData) {
                         epRuntime = nextEpData.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                         if (nextEpData.air_date && nextEpData.air_date > today) {
-                            // È in pari, la prossima puntata deve ancora uscire
                             isUpcoming = true;
-                            targetEpisode = { 
-                                key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
-                                name: nextEpData.name,
-                                air_date: nextEpData.air_date 
-                            };
+                            targetEpisode = { key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, name: nextEpData.name, air_date: nextEpData.air_date };
                         } else if (!nextEpData.air_date || nextEpData.air_date <= today) {
-                            // Puntata uscita e pronta da vedere
-                            targetEpisode = { 
-                                key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
-                                name: nextEpData.name 
-                            };
+                            targetEpisode = { key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, name: nextEpData.name };
                         }
                     } else {
-                        // Cerca nella prossima stagione
-                        const nextSeasons = Object.keys(tmdbData.detailed_seasons)
-                            .map(Number)
-                            .filter(s => s > maxS)
-                            .sort((a,b) => a - b);
-                        
+                        const nextSeasons = Object.keys(tmdbData.detailed_seasons).map(Number).filter(s => s > maxS).sort((a,b) => a - b);
                         for (const nextS of nextSeasons) {
                             const nextSeasonData = tmdbData.detailed_seasons[nextS];
                             if (nextSeasonData && nextSeasonData.episodes && nextSeasonData.episodes.length > 0) {
@@ -274,16 +258,9 @@ async function renderHome() {
                                     epRuntime = firstValidEp.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                                     if (firstValidEp.air_date && firstValidEp.air_date > today) {
                                         isUpcoming = true;
-                                        targetEpisode = { 
-                                            key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
-                                            name: firstValidEp.name,
-                                            air_date: firstValidEp.air_date 
-                                        };
+                                        targetEpisode = { key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, name: firstValidEp.name, air_date: firstValidEp.air_date };
                                     } else if (!firstValidEp.air_date || firstValidEp.air_date <= today) {
-                                        targetEpisode = { 
-                                            key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
-                                            name: firstValidEp.name 
-                                        };
+                                        targetEpisode = { key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, name: firstValidEp.name };
                                     }
                                     break;
                                 }
@@ -293,93 +270,122 @@ async function renderHome() {
                 }
             }
 
+            // Inserimento negli array di smistamento
             if (targetEpisode) {
-                const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
-
+                const itemData = {
+                    key,
+                    tmdbData,
+                    targetEpisode,
+                    epRuntime,
+                    lastUpdated: userSeries.last_updated || 0 // Fallback se il timestamp non esiste
+                };
+                
                 if (isUpcoming) {
-                    upcomingCount++;
-                    const dateFormatted = targetEpisode.air_date.split('-').reverse().join('/');
-                    const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
-
-                    upcomingHTML += `
-                        <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
-                            <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${tmdbData.name}">
-                            <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                                <div>
-                                    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
-                                        <strong style="font-size: 0.9rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
-                                            ${tmdbData.name}
-                                        </strong>
-                                        <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
-                                            ${targetEpisode.key}
-                                        </span>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem;">
-                                        ${targetEpisode.name}
-                                    </div>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
-                                    <span style="font-size: 0.75rem; font-weight: 800; color: var(--text); display: flex; align-items: center;">
-                                        ${calendarSvg} Uscita: ${dateFormatted}
-                                    </span>
-                                    <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="openDetailView('${key}'); switchTab('detail');">
-                                        Dettagli
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
+                    upcomingSeriesList.push(itemData);
                 } else {
-                    activeCount++;
-                    inProgressHTML += `
-                        <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
-                            <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${tmdbData.name}">
-                            <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                                <div>
-                                    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
-                                        <strong style="font-size: 0.95rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
-                                            ${tmdbData.name}
-                                        </strong>
-                                        <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
-                                            ${targetEpisode.key}
-                                        </span>
-                                    </div>
-                                    <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
-                                        ${targetEpisode.name}
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 0.5rem; margin-top: auto;">
-                                    <button class="btn btn-success" style="flex: 1; padding: 0.25rem; font-size: 0.8rem; font-weight: 800;" onclick="markNextEpisodeWatched('${key}', '${targetEpisode.key}', ${epRuntime})">
-                                        VISTO
-                                    </button>
-                                    <button class="btn btn-outline" style="padding: 0.25rem 0.6rem;" onclick="openDetailView('${key}'); switchTab('detail');" title="Dettagli">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
+                    activeSeriesList.push(itemData);
                 }
             }
         }
 
+        // ==========================================
+        // 3. LOGICA DI ORDINAMENTO (IL TUO OBIETTIVO)
+        // ==========================================
+        
+        // Ordina Prossime Uscite: Dalla più vicina (oggi) alla più lontana (futuro)
+        upcomingSeriesList.sort((a, b) => a.targetEpisode.air_date.localeCompare(b.targetEpisode.air_date));
+
+        // Ordina In Corso: Dalla più recente interagita alla più vecchia
+        activeSeriesList.sort((a, b) => b.lastUpdated - a.lastUpdated);
+
+        // ==========================================
+        // 4. GENERAZIONE UI
+        // ==========================================
+
+        const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
+        
+        let inProgressHTML = activeSeriesList.map(item => {
+            const posterUrl = item.tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
+            return `
+                <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
+                    <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${item.tmdbData.name}">
+                    <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+                        <div>
+                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                <strong style="font-size: 0.95rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
+                                    ${item.tmdbData.name}
+                                </strong>
+                                <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
+                                    ${item.targetEpisode.key}
+                                </span>
+                            </div>
+                            <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
+                                ${item.targetEpisode.name}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; margin-top: auto;">
+                            <button class="btn btn-success" style="flex: 1; padding: 0.25rem; font-size: 0.8rem; font-weight: 800;" onclick="markNextEpisodeWatched('${item.key}', '${item.targetEpisode.key}', ${item.epRuntime})">
+                                VISTO
+                            </button>
+                            <button class="btn btn-outline" style="padding: 0.25rem 0.6rem;" onclick="openDetailView('${item.key}'); switchTab('detail');" title="Dettagli">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        let upcomingHTML = upcomingSeriesList.map(item => {
+            const posterUrl = item.tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
+            const dateFormatted = item.targetEpisode.air_date.split('-').reverse().join('/');
+            return `
+                <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
+                    <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${item.tmdbData.name}">
+                    <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+                        <div>
+                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                <strong style="font-size: 0.9rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
+                                    ${item.tmdbData.name}
+                                </strong>
+                                <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
+                                    ${item.targetEpisode.key}
+                                </span>
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem;">
+                                ${item.targetEpisode.name}
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
+                            <span style="font-size: 0.75rem; font-weight: 800; color: var(--text); display: flex; align-items: center;">
+                                ${calendarSvg} Uscita: ${dateFormatted}
+                            </span>
+                            <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="openDetailView('${item.key}'); switchTab('detail');">
+                                Dettagli
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
         let finalHtml = '';
 
-        if (activeCount > 0) {
+        if (activeSeriesList.length > 0) {
             finalHtml += `
                 <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem; letter-spacing: 0.5px;">Da continuare</p>
                 ${inProgressHTML}
             `;
         }
 
-        if (upcomingCount > 0) {
+        if (upcomingSeriesList.length > 0) {
             finalHtml += `
-                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-top: ${activeCount > 0 ? '2rem' : '0'}; margin-bottom: 1rem; letter-spacing: 0.5px;">Prossime Uscite (In Pari)</p>
+                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-top: ${activeSeriesList.length > 0 ? '2rem' : '0'}; margin-bottom: 1rem; letter-spacing: 0.5px;">Prossime Uscite (In Pari)</p>
                 ${upcomingHTML}
             `;
         }
 
-        if (activeCount === 0 && upcomingCount === 0) {
+        if (activeSeriesList.length === 0 && upcomingSeriesList.length === 0) {
             container.innerHTML = `
                 <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie attiva al momento. Le serie in corso appariranno qui.</p>
                 <button class="btn" onclick="switchTab('library')">Sfoglia Libreria</button>
@@ -392,7 +398,9 @@ async function renderHome() {
         console.error("[CRITICO] Fallimento rendering Home:", e);
         container.innerHTML = '<span style="color: var(--danger);">Errore nel calcolo del cruscotto operativo.</span>';
     }
-}
+ }
+
+                                    
 
 // Motore chirurgico per l'avanzamento rapido direttamente dalla Home
 async function markNextEpisodeWatched(tvId, epKey, epRuntime) {
@@ -408,6 +416,7 @@ async function markNextEpisodeWatched(tvId, epKey, epRuntime) {
         userSeries.watched_count = (userSeries.watched_count || 0) + 1;
         userSeries.watched_minutes = (userSeries.watched_minutes || 0) + epRuntime;
 
+        userSeries.last_updated = Date.now();
         // Chiusura transazione base
         await UserLibrary.setItem(String(tvId), userSeries);
 
@@ -928,6 +937,7 @@ async function toggleEpisode(tvId, epKey) {
             }
         }
 
+        userSeries.last_updated = Date.now();
         // Chiusura Transazione Database
         await UserLibrary.setItem(String(tvId), userSeries);
         
@@ -1343,6 +1353,7 @@ async function markSeasonWatched(tvId, seasonNum) {
         }
 
         if (modified) {
+            userSeries.last_updated = Date.now();
             await UserLibrary.setItem(String(tvId), userSeries);
             await checkAutoCompletion(tvId); 
             openDetailView(tvId); // Esegue il re-render totale per aggiornare visivamente le spunte
