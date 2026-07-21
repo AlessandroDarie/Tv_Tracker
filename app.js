@@ -1223,14 +1223,26 @@ async function exportData() {
             exportObj[key] = await UserLibrary.getItem(key);
         }
         
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObj));
-        const downloadAnchorNode = document.createElement('a');
+        // 1. Creazione stringa JSON (con formattazione per leggibilità in caso di ispezione manuale)
+        const jsonString = JSON.stringify(exportObj, null, 2);
         
-        downloadAnchorNode.setAttribute("href", dataStr);
+        // 2. MOTORE BLOB: Forza il MIME type a livello di sistema operativo
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        
+        // 3. Generazione di un URL temporaneo in memoria
+        const url = URL.createObjectURL(blob);
+        
+        // 4. Esecuzione del download
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", url);
         downloadAnchorNode.setAttribute("download", `setfree_tv_backup_${new Date().toISOString().split('T')[0]}.json`);
+        
         document.body.appendChild(downloadAnchorNode); 
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
+        
+        // 5. Pulizia chirurgica della memoria
+        URL.revokeObjectURL(url);
         
         await customAlert("Backup esportato con successo. Conserva questo file al sicuro.");
     } catch (error) {
@@ -1238,6 +1250,7 @@ async function exportData() {
         await customAlert("Fallimento critico durante la creazione del backup.");
     }
 }
+
 
 async function importData(event) {
     const file = event.target.files[0];
