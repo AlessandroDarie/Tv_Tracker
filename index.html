@@ -45,18 +45,17 @@
         }
         
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
-        body { background-color: var(--bg); color: var(--text); line-height: 1.6; }
+        body { background-color: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden; width: 100%; position: relative; }
         
         /* NAVIGAZIONE */
-        nav { background: var(--card-bg); padding: 1rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-        .nav-container { max-width: 800px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-        .nav-links { display: flex; gap: 0.25rem; }
-        .nav-utils { display: flex; gap: 0.5rem; align-items: center; }
-        
-        nav button { background: none; border: none; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); cursor: pointer; padding: 0.5rem 0.6rem; border-radius: 8px; transition: background-color 0.2s, color 0.2s; white-space: nowrap; }
+        nav { background: var(--card-bg); padding: 0.75rem 0.5rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .nav-container { max-width: 800px; margin: 0 auto; display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
+        .nav-links { display: flex; gap: 0.1rem; flex-wrap: nowrap; justify-content: center; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
+        .nav-links::-webkit-scrollbar { display: none; }
+        nav button { background: none; border: none; font-size: 0.85rem; font-weight: 700; color: var(--text-muted); cursor: pointer; padding: 0.5rem; border-radius: 6px; white-space: nowrap; transition: background-color 0.2s, color 0.2s; }
         nav button:hover { color: var(--text); background: var(--input-bg); }
         nav button.active { background: var(--primary); color: var(--primary-text); }
-        
+        .nav-utils { flex-shrink: 0; display: flex; align-items: center; }
         .nav-utils button { padding: 0.4rem; border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--text); }
         .nav-utils button:hover { background: var(--input-bg); }
 
@@ -67,18 +66,18 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         
         h1, h2, h3 { color: var(--text); font-weight: 800; margin-bottom: 1rem; }
-        .card { background: var(--card-bg); padding: 1.5rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
+        .card { background: var(--card-bg); padding: 2rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1.5rem; }
         
         /* UI COMPONENTS */
-        .btn { background: var(--primary); color: var(--primary-text); border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; }
+        .btn { background: var(--primary); color: var(--primary-text); border: none; padding: 0.75rem 1.5rem; border-radius: 4px; cursor: pointer; font-weight: 700; font-size: 1rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; }
         .btn:hover { background: var(--primary-hover); }
         .btn-danger { background: var(--danger); color: white; }
         .btn-success { background: var(--success); color: white; }
         .btn-outline { background: transparent; border: 1.5px solid var(--text); color: var(--text); }
         .btn-outline:hover { background: var(--input-bg); }
-        .btn-small { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+        .btn-small { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
         
-        input { padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; background-color: var(--input-bg); color: var(--text); outline: none; }
+        input { padding: 0.75rem 1rem; font-size: 1rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; background-color: var(--input-bg); color: var(--text); outline: none; }
         input:focus { border-color: var(--primary); }
 
        /* GRID LIBRERIA COMPATTA */
@@ -149,13 +148,14 @@
 
     <!-- NAVBAR -->
     <nav>
-        <div class="nav-container">
-            <!-- TITOLO / LOGO -->
-            <div style="font-size: 1.4rem; letter-spacing: -1.5px; color: var(--text); display: flex; align-items: center; text-transform: uppercase;">
+        <div class="nav-container" style="justify-content: space-between;">
+            
+            <!-- TITOLO / LOGO CORRETTO -->
+            <div style="font-size: 1.25rem; flex-shrink: 0; letter-spacing: -1.5px; color: var(--text); display: flex; align-items: center; text-transform: uppercase;">
                 <strong style="font-weight: 900;">This</strong><span style="font-weight: 400; opacity: 0.7;">Play</span>
             </div>
             
-            <!-- LINK CENTRALI AGGIORNATI -->
+            <!-- LINK CENTRALI -->
             <div class="nav-links">
                 <button onclick="switchTab('home')" id="nav-home" class="active">Home</button>
                 <button onclick="switchTab('library')" id="nav-library">Libreria</button>
@@ -176,7 +176,7 @@
     </nav>
 
     <main>
-        <!-- VISTA: HOME (Nuova) -->
+        <!-- VISTA: HOME -->
         <section id="view-home" class="view active card">
             <h2 style="font-size: 1.8rem; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase;">HOME</h2>
             <div id="home-content"></div>
@@ -209,7 +209,7 @@
             <div id="search-results" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
         </section>
 
-        <!-- VISTA: STATISTICHE (Nuova) -->
+        <!-- VISTA: STATISTICHE -->
         <section id="view-stats" class="view card">
             <h2>Le Tue Statistiche</h2>
             <div id="stats-content"></div>
@@ -242,7 +242,6 @@
                 <strong style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Database & Archiviazione</strong>
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
                     
-                    <!-- I TUOI TASTI ESISTENTI JSON -->
                     <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700;" onclick="closeSettings(null, true); exportData();">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                         Esporta Dati
@@ -253,7 +252,6 @@
                     </button>
                     <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
                     
-                    <!-- NUOVO BLOCCO TV TIME -->
                     <div style="margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
                         <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700; border-color: var(--danger); color: var(--danger);" onclick="closeSettings(null, true); document.getElementById('tvtime-zip-input').click();">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>

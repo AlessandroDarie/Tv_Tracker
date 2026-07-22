@@ -1,5 +1,5 @@
 const CACHE_NAME = 'thisplay-v1.1';
-const ASSETS_TO_CACHE = [
+const ASSETS_CORE = [
     './index.html',
     './app.js',
     './migrator.js',
