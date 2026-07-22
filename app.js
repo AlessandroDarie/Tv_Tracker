@@ -1185,7 +1185,7 @@ function customAlert(message) {
 }
 
 // ==========================================
-// MOTORE DI BACKUP E RIPRISTINO
+// MOTORE DI BACKUP E RIPRISTINO (Refactored)
 // ==========================================
 
 async function exportData() {
@@ -1193,7 +1193,6 @@ async function exportData() {
         const userKeys = await UserLibrary.keys();
         const tmdbKeys = await TmdbCache.keys();
         
-        // Impacchettiamo sia i progressi vitali che l'intera cache offline
         const exportObj = {
             user_library: {},
             tmdb_cache: {}
@@ -1206,14 +1205,22 @@ async function exportData() {
             exportObj.tmdb_cache[key] = await TmdbCache.getItem(key);
         }
         
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObj));
-        const downloadAnchorNode = document.createElement('a');
+        // STRATEGIA 1: Smettere di usare Data URI. Usare i Blob per aggirare i limiti di memoria mobile.
+        const jsonString = JSON.stringify(exportObj);
+        const blob = new Blob([jsonString], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
         
-        downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", `thisplay_backup_${new Date().toISOString().split('T')[0]}.json`);
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.href = url;
+        downloadAnchorNode.download = `thisplay_backup_${new Date().toISOString().split('T')[0]}.json`;
         document.body.appendChild(downloadAnchorNode); 
         downloadAnchorNode.click();
-        downloadAnchorNode.remove();
+        
+        // Pulizia della memoria
+        setTimeout(() => {
+            document.body.removeChild(downloadAnchorNode);
+            URL.revokeObjectURL(url);
+        }, 150);
         
         await customAlert("Backup completo (Progressi + Dati TMDB) esportato con successo. Conserva questo file al sicuro.");
     } catch (error) {
@@ -1232,13 +1239,11 @@ async function importData(event) {
             const importedData = JSON.parse(e.target.result);
             if (typeof importedData !== 'object' || importedData === null) throw new Error("Formato JSON non valido");
 
-            // Riconoscimento della topologia del file: Vecchio formato (solo library) vs Nuovo formato (library + cache)
             const isNewFormat = importedData.user_library && importedData.tmdb_cache;
             const isOldFormat = !isNewFormat && Object.keys(importedData).length > 0 && importedData[Object.keys(importedData)[0]].status !== undefined;
 
             if (!isNewFormat && !isOldFormat) throw new Error("Struttura dati non riconosciuta");
 
-            // Il gatekeeper: mai sovrascrivere senza il consenso esplicito dell'utente
             const confermato = await customConfirm(
                 "Vuoi sovrascrivere il database attuale con questo backup? I dati presenti sul dispositivo verranno annientati.", 
                 { title: "Ripristino Irreversibile", confirmText: "Sovrascrivi", isDestructive: true }
@@ -1249,20 +1254,25 @@ async function importData(event) {
                 return;
             }
 
-            // Tabula rasa: distruggiamo il db attuale per evitare conflitti fantasma
             await UserLibrary.clear();
 
             if (isNewFormat) {
-                // Formato completo
                 await TmdbCache.clear();
+                
+                let counter = 0;
                 for (const [key, value] of Object.entries(importedData.user_library)) {
                     await UserLibrary.setItem(key, value);
+                    // STRATEGIA 2: Fai respirare il thread. Impedisce a WebKit (iOS) di crashare per troppe transazioni IndexedDB.
+                    if (++counter % 5 === 0) await sleep(50); 
                 }
+                
+                counter = 0;
                 for (const [key, value] of Object.entries(importedData.tmdb_cache)) {
                     await TmdbCache.setItem(key, value);
+                    // Pausa obbligatoria per oggetti enormi
+                    if (++counter % 3 === 0) await sleep(100); 
                 }
             } else {
-                // Retrocompatibilità per salvataggi fatti con la vecchia versione del codice
                 for (const [key, value] of Object.entries(importedData)) {
                     await UserLibrary.setItem(key, value);
                 }
@@ -1272,7 +1282,6 @@ async function importData(event) {
             await customAlert("Backup ripristinato con successo! L'interfaccia si ricaricherà ora.");
             event.target.value = ''; 
             
-            // Forza il ricaricamento totale della root per allineare le metriche
             switchTab('home'); 
 
         } catch (error) {
