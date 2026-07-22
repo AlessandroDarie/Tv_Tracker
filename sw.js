@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thisplay-v1.2';
+const CACHE_NAME = 'thisplay-v1.3';
 const ASSETS_CORE = [
     './index.html',
     './app.js',
@@ -12,6 +12,7 @@ const ASSETS_CORE = [
 
 // 1. INSTALLAZIONE: Congela il nucleo dell'app al primo avvio
 self.addEventListener('install', (event) => {
+    self.skipWaiting();
     event.waitUntil(
         caches.open(CACHE_NAME)
         .then((cache) => cache.addAll(ASSETS_CORE))
@@ -21,6 +22,7 @@ self.addEventListener('install', (event) => {
 
 // 2. ATTIVAZIONE: Elimina le vecchie versioni della cache se un domani modifichi l'HTML
 self.addEventListener('activate', (event) => {
+    event.waitUntil(self.clients.claim());
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(

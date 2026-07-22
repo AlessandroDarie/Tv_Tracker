@@ -199,10 +199,9 @@ async function renderHome() {
             return;
         }
 
-        let inProgressHTML = '';
-        let upcomingHTML = '';
-        let activeCount = 0;
-        let upcomingCount = 0;
+        // 1. STRATEGIA: Invece di incollare testo, salviamo gli oggetti per poterli ordinare
+        let inProgressItems = [];
+        let upcomingItems = [];
 
         const today = new Date().toISOString().split('T')[0];
 
@@ -243,7 +242,6 @@ async function renderHome() {
                     if (nextEpData) {
                         epRuntime = nextEpData.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                         if (nextEpData.air_date && nextEpData.air_date > today) {
-                            // È in pari, la prossima puntata deve ancora uscire
                             isUpcoming = true;
                             targetEpisode = { 
                                 key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
@@ -251,14 +249,12 @@ async function renderHome() {
                                 air_date: nextEpData.air_date 
                             };
                         } else if (!nextEpData.air_date || nextEpData.air_date <= today) {
-                            // Puntata uscita e pronta da vedere
                             targetEpisode = { 
                                 key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
                                 name: nextEpData.name 
                             };
                         }
                     } else {
-                        // Cerca nella prossima stagione
                         const nextSeasons = Object.keys(tmdbData.detailed_seasons)
                             .map(Number)
                             .filter(s => s > maxS)
@@ -297,11 +293,12 @@ async function renderHome() {
                 const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
 
                 if (isUpcoming) {
-                    upcomingCount++;
                     const dateFormatted = targetEpisode.air_date.split('-').reverse().join('/');
                     const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
 
-                    upcomingHTML += `
+                    upcomingItems.push({
+                        dateTimestamp: new Date(targetEpisode.air_date).getTime(),
+                        html: `
                         <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
                             <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${tmdbData.name}">
                             <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
@@ -328,10 +325,11 @@ async function renderHome() {
                                 </div>
                             </div>
                         </div>
-                    `;
+                    `});
                 } else {
-                    activeCount++;
-                    inProgressHTML += `
+                    inProgressItems.push({
+                        lastInteraction: getLastInteraction(userSeries),
+                        html: `
                         <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
                             <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${tmdbData.name}">
                             <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
@@ -358,10 +356,20 @@ async function renderHome() {
                                 </div>
                             </div>
                         </div>
-                    `;
+                    `});
                 }
             }
         }
+
+        // 2. ESECUZIONE DELL'ORDINAMENTO LOGICO SUI DATI GREZZI
+        inProgressItems.sort((a, b) => b.lastInteraction - a.lastInteraction);
+        upcomingItems.sort((a, b) => a.dateTimestamp - b.dateTimestamp);
+
+        // 3. ESTRAZIONE HTML DAGLI ARRAY ORDINATI
+        const activeCount = inProgressItems.length;
+        const upcomingCount = upcomingItems.length;
+        const inProgressHTML = inProgressItems.map(item => item.html).join('');
+        const upcomingHTML = upcomingItems.map(item => item.html).join('');
 
         let finalHtml = '';
 
@@ -1577,8 +1585,18 @@ if ('serviceWorker' in navigator) {
             .then(reg => console.log('[SYS] Service Worker registrato con successo.', reg.scope))
             .catch(err => console.error('[CRITICO] Registrazione Service Worker fallita:', err));
             
-        // Innesco del motore TTL per la cache obsoleta
         setTimeout(silentCacheUpdate, 5000);
+    });
+
+    // 3. IL MOTORE DI AUTORELOAD
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        // Questo check evita un loop infinito di ricaricamenti se ci sono schede multiple
+        if (!refreshing) {
+            console.log('[SYS] Nuovo Service Worker attivato. Aggiornamento interfaccia in corso...');
+            window.location.reload();
+            refreshing = true;
+        }
     });
 }
 
