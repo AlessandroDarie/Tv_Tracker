@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="manifest" href="./manifest.json">
-    <title>SetFree TV</title>
+    <link rel="icon" href="icon_192x192.png">
+    <title>ThisPlay</title>
     <style>
         :root {
             /* TEMA CHIARO */
@@ -20,6 +21,7 @@
             --border: #e4e4e7;
             --input-bg: #e5e5e5;
             --radius: 6px;
+            --logo-filter: invert(0);
         }
 
         [data-theme="dark"] {
@@ -35,6 +37,7 @@
             --text-muted: #a1a1aa;
             --border: #3f3f46;
             --input-bg: #27272a;
+            --logo-filter: invert(1);
         }
         
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
@@ -144,8 +147,8 @@
     <nav>
         <div class="nav-container">
             <!-- TITOLO / LOGO -->
-            <div style="font-weight: 900; font-size: 1.2rem; letter-spacing: -1px; color: var(--text); display: flex; align-items: center;">
-                SetFree TV
+            <div style="font-size: 1.4rem; letter-spacing: -1.5px; color: var(--text); display: flex; align-items: center; text-transform: uppercase;">
+                <strong style="font-weight: 900;">This</strong><span style="font-weight: 400; opacity: 0.7;">Play</span>
             </div>
             
             <!-- LINK CENTRALI AGGIORNATI -->
@@ -171,7 +174,7 @@
     <main>
         <!-- VISTA: HOME (Nuova) -->
         <section id="view-home" class="view active card">
-            <h2>Cruscotto</h2>
+            <h2 style="font-size: 1.8rem; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase;">HOME</h2>
             <div id="home-content"></div>
         </section>
 
@@ -217,7 +220,7 @@
 
     <!-- FOOTER -->
     <footer>
-        SetFree TV<br>
+        ThisPlay<br>
         Copyright &copy; 2026 Alessandro Darie
     </footer>
 
@@ -234,6 +237,8 @@
             <div style="margin-bottom: 1.5rem;">
                 <strong style="font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Database & Archiviazione</strong>
                 <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    
+                    <!-- I TUOI TASTI ESISTENTI JSON -->
                     <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700;" onclick="closeSettings(null, true); exportData();">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                         Esporta Dati
@@ -243,6 +248,16 @@
                         Importa Dati
                     </button>
                     <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
+
+                    <!-- NUOVO BLOCCO TV TIME -->
+                    <div style="margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+                        <button class="btn btn-outline" style="justify-content: flex-start; padding: 0.75rem; font-weight: 700; border-color: var(--danger); color: var(--danger);" onclick="closeSettings(null, true); document.getElementById('tvtime-zip-input').click();">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                            Migra da TV Time (.zip)
+                        </button>
+                        <input type="file" id="tvtime-zip-input" accept=".zip" style="display: none;" onchange="handleTVTimeZip(event)">
+                    </div>
+
                 </div>
             </div>
 
@@ -266,6 +281,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <script src="api-config.js"></script>
+    <script src="migrator.js"></script>
     <script src="app.js"></script>
 
     <!-- LOADER GLOBALE -->

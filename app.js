@@ -184,7 +184,7 @@ async function backgroundSeasonSync(tvId, seasonsList) {
 // VISTE PRINCIPALI (HOME, LIBRERIA, STATS)
 // ==========================================
 
- async function renderHome() {
+async function renderHome() {
     currentContext = 'home';
     const container = document.getElementById('home-content');
     container.innerHTML = '<span style="color: var(--text-muted);">Scansione database in corso...</span>';
@@ -199,12 +199,13 @@ async function backgroundSeasonSync(tvId, seasonsList) {
             return;
         }
 
-        // 1. STRUTTURE DATI DI RACCOLTA (Separazione tra Dati e UI)
-        const activeSeriesList = [];
-        const upcomingSeriesList = [];
+        let inProgressHTML = '';
+        let upcomingHTML = '';
+        let activeCount = 0;
+        let upcomingCount = 0;
+
         const today = new Date().toISOString().split('T')[0];
 
-        // 2. MOTORE DI ESTRAZIONE
         for (const key of keys) {
             const userSeries = await UserLibrary.getItem(key);
             
@@ -217,6 +218,7 @@ async function backgroundSeasonSync(tvId, seasonsList) {
             let targetEpisode = null;
             let isUpcoming = false;
             let epRuntime = 45;
+
             let maxS = 0;
             let maxE = 0;
             
@@ -241,13 +243,27 @@ async function backgroundSeasonSync(tvId, seasonsList) {
                     if (nextEpData) {
                         epRuntime = nextEpData.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                         if (nextEpData.air_date && nextEpData.air_date > today) {
+                            // È in pari, la prossima puntata deve ancora uscire
                             isUpcoming = true;
-                            targetEpisode = { key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, name: nextEpData.name, air_date: nextEpData.air_date };
+                            targetEpisode = { 
+                                key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
+                                name: nextEpData.name,
+                                air_date: nextEpData.air_date 
+                            };
                         } else if (!nextEpData.air_date || nextEpData.air_date <= today) {
-                            targetEpisode = { key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, name: nextEpData.name };
+                            // Puntata uscita e pronta da vedere
+                            targetEpisode = { 
+                                key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
+                                name: nextEpData.name 
+                            };
                         }
                     } else {
-                        const nextSeasons = Object.keys(tmdbData.detailed_seasons).map(Number).filter(s => s > maxS).sort((a,b) => a - b);
+                        // Cerca nella prossima stagione
+                        const nextSeasons = Object.keys(tmdbData.detailed_seasons)
+                            .map(Number)
+                            .filter(s => s > maxS)
+                            .sort((a,b) => a - b);
+                        
                         for (const nextS of nextSeasons) {
                             const nextSeasonData = tmdbData.detailed_seasons[nextS];
                             if (nextSeasonData && nextSeasonData.episodes && nextSeasonData.episodes.length > 0) {
@@ -258,9 +274,16 @@ async function backgroundSeasonSync(tvId, seasonsList) {
                                     epRuntime = firstValidEp.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                                     if (firstValidEp.air_date && firstValidEp.air_date > today) {
                                         isUpcoming = true;
-                                        targetEpisode = { key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, name: firstValidEp.name, air_date: firstValidEp.air_date };
+                                        targetEpisode = { 
+                                            key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
+                                            name: firstValidEp.name,
+                                            air_date: firstValidEp.air_date 
+                                        };
                                     } else if (!firstValidEp.air_date || firstValidEp.air_date <= today) {
-                                        targetEpisode = { key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, name: firstValidEp.name };
+                                        targetEpisode = { 
+                                            key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
+                                            name: firstValidEp.name 
+                                        };
                                     }
                                     break;
                                 }
@@ -270,122 +293,93 @@ async function backgroundSeasonSync(tvId, seasonsList) {
                 }
             }
 
-            // Inserimento negli array di smistamento
             if (targetEpisode) {
-                const itemData = {
-                    key,
-                    tmdbData,
-                    targetEpisode,
-                    epRuntime,
-                    lastUpdated: userSeries.last_updated || 0 // Fallback se il timestamp non esiste
-                };
-                
+                const posterUrl = tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
+
                 if (isUpcoming) {
-                    upcomingSeriesList.push(itemData);
+                    upcomingCount++;
+                    const dateFormatted = targetEpisode.air_date.split('-').reverse().join('/');
+                    const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
+
+                    upcomingHTML += `
+                        <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
+                            <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${tmdbData.name}">
+                            <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                        <strong style="font-size: 0.9rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
+                                            ${tmdbData.name}
+                                        </strong>
+                                        <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
+                                            ${targetEpisode.key}
+                                        </span>
+                                    </div>
+                                    <div style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem;">
+                                        ${targetEpisode.name}
+                                    </div>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
+                                    <span style="font-size: 0.75rem; font-weight: 800; color: var(--text); display: flex; align-items: center;">
+                                        ${calendarSvg} Uscita: ${dateFormatted}
+                                    </span>
+                                    <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="openDetailView('${key}'); switchTab('detail');">
+                                        Dettagli
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
                 } else {
-                    activeSeriesList.push(itemData);
+                    activeCount++;
+                    inProgressHTML += `
+                        <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
+                            <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${tmdbData.name}">
+                            <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                        <strong style="font-size: 0.95rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
+                                            ${tmdbData.name}
+                                        </strong>
+                                        <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
+                                            ${targetEpisode.key}
+                                        </span>
+                                    </div>
+                                    <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
+                                        ${targetEpisode.name}
+                                    </div>
+                                </div>
+                                <div style="display: flex; gap: 0.5rem; margin-top: auto;">
+                                    <button class="btn btn-success" style="flex: 1; padding: 0.25rem; font-size: 0.8rem; font-weight: 800;" onclick="markNextEpisodeWatched('${key}', '${targetEpisode.key}', ${epRuntime})">
+                                        VISTO
+                                    </button>
+                                    <button class="btn btn-outline" style="padding: 0.25rem 0.6rem;" onclick="openDetailView('${key}'); switchTab('detail');" title="Dettagli">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
                 }
             }
         }
 
-        // ==========================================
-        // 3. LOGICA DI ORDINAMENTO (IL TUO OBIETTIVO)
-        // ==========================================
-        
-        // Ordina Prossime Uscite: Dalla più vicina (oggi) alla più lontana (futuro)
-        upcomingSeriesList.sort((a, b) => a.targetEpisode.air_date.localeCompare(b.targetEpisode.air_date));
-
-        // Ordina In Corso: Dalla più recente interagita alla più vecchia
-        activeSeriesList.sort((a, b) => b.lastUpdated - a.lastUpdated);
-
-        // ==========================================
-        // 4. GENERAZIONE UI
-        // ==========================================
-
-        const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
-        
-        let inProgressHTML = activeSeriesList.map(item => {
-            const posterUrl = item.tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
-            return `
-                <div style="display: flex; border: 1.5px solid var(--text); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 110px;">
-                    <img src="${posterUrl}" style="width: 75px; object-fit: cover; border-right: 1.5px solid var(--text);" alt="${item.tmdbData.name}">
-                    <div style="flex: 1; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                        <div>
-                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
-                                <strong style="font-size: 0.95rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
-                                    ${item.tmdbData.name}
-                                </strong>
-                                <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
-                                    ${item.targetEpisode.key}
-                                </span>
-                            </div>
-                            <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
-                                ${item.targetEpisode.name}
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 0.5rem; margin-top: auto;">
-                            <button class="btn btn-success" style="flex: 1; padding: 0.25rem; font-size: 0.8rem; font-weight: 800;" onclick="markNextEpisodeWatched('${item.key}', '${item.targetEpisode.key}', ${item.epRuntime})">
-                                VISTO
-                            </button>
-                            <button class="btn btn-outline" style="padding: 0.25rem 0.6rem;" onclick="openDetailView('${item.key}'); switchTab('detail');" title="Dettagli">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        let upcomingHTML = upcomingSeriesList.map(item => {
-            const posterUrl = item.tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdbData.poster_path}` : 'https://via.placeholder.com/150x225?text=No+Img';
-            const dateFormatted = item.targetEpisode.air_date.split('-').reverse().join('/');
-            return `
-                <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
-                    <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${item.tmdbData.name}">
-                    <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                        <div>
-                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
-                                <strong style="font-size: 0.9rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
-                                    ${item.tmdbData.name}
-                                </strong>
-                                <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
-                                    ${item.targetEpisode.key}
-                                </span>
-                            </div>
-                            <div style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem;">
-                                ${item.targetEpisode.name}
-                            </div>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
-                            <span style="font-size: 0.75rem; font-weight: 800; color: var(--text); display: flex; align-items: center;">
-                                ${calendarSvg} Uscita: ${dateFormatted}
-                            </span>
-                            <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="openDetailView('${item.key}'); switchTab('detail');">
-                                Dettagli
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
         let finalHtml = '';
 
-        if (activeSeriesList.length > 0) {
+        if (activeCount > 0) {
             finalHtml += `
                 <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem; letter-spacing: 0.5px;">Da continuare</p>
                 ${inProgressHTML}
             `;
         }
 
-        if (upcomingSeriesList.length > 0) {
+        if (upcomingCount > 0) {
             finalHtml += `
-                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-top: ${activeSeriesList.length > 0 ? '2rem' : '0'}; margin-bottom: 1rem; letter-spacing: 0.5px;">Prossime Uscite (In Pari)</p>
+                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-top: ${activeCount > 0 ? '2rem' : '0'}; margin-bottom: 1rem; letter-spacing: 0.5px;">Prossime Uscite (In Pari)</p>
                 ${upcomingHTML}
             `;
         }
 
-        if (activeSeriesList.length === 0 && upcomingSeriesList.length === 0) {
+        if (activeCount === 0 && upcomingCount === 0) {
             container.innerHTML = `
                 <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie attiva al momento. Le serie in corso appariranno qui.</p>
                 <button class="btn" onclick="switchTab('library')">Sfoglia Libreria</button>
@@ -398,9 +392,7 @@ async function backgroundSeasonSync(tvId, seasonsList) {
         console.error("[CRITICO] Fallimento rendering Home:", e);
         container.innerHTML = '<span style="color: var(--danger);">Errore nel calcolo del cruscotto operativo.</span>';
     }
- }
-
-                                    
+}
 
 // Motore chirurgico per l'avanzamento rapido direttamente dalla Home
 async function markNextEpisodeWatched(tvId, epKey, epRuntime) {
@@ -416,7 +408,6 @@ async function markNextEpisodeWatched(tvId, epKey, epRuntime) {
         userSeries.watched_count = (userSeries.watched_count || 0) + 1;
         userSeries.watched_minutes = (userSeries.watched_minutes || 0) + epRuntime;
 
-        userSeries.last_updated = Date.now();
         // Chiusura transazione base
         await UserLibrary.setItem(String(tvId), userSeries);
 
@@ -937,7 +928,6 @@ async function toggleEpisode(tvId, epKey) {
             }
         }
 
-        userSeries.last_updated = Date.now();
         // Chiusura Transazione Database
         await UserLibrary.setItem(String(tvId), userSeries);
         
@@ -1041,59 +1031,44 @@ async function checkAutoCompletion(tvId) {
         if (!userSeries.progress) userSeries.progress = {};
 
         let expectedEpisodes = 0;
-        let hasFutureEpisodes = false; // NUOVO RADAR PER IL FUTURO
         const today = new Date().toISOString().split('T')[0];
 
-        // 1. Calcolo Infallibile del Target
+        // 1. Calcolo Infallibile del Target (Escludendo il futuro)
         for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
             if (seasonData.episodes) {
                 for (const ep of seasonData.episodes) {
                     const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
                     
-                    // L'episodio fa statistica se è già andato in onda o se spuntato a mano
+                    // L'episodio fa statistica SOLO se è già andato in onda 
+                    // OPPURE se non ha data ma tu lo hai spuntato forzatamente.
                     if ((ep.air_date && ep.air_date <= today) || userSeries.progress[epKey]) {
                         expectedEpisodes++;
-                    }
-
-                    // Se l'episodio ha una data nel futuro, accende il radar
-                    if (ep.air_date && ep.air_date > today) {
-                        hasFutureEpisodes = true;
                     }
                 }
             }
         }
 
-        // 2. La VERA conta contabile
+        // 2. La VERA conta contabile (nessuna fiducia nei contatori incrementali)
         const actualWatched = Object.keys(userSeries.progress).length;
 
-        // Auto-riparazione silenziosa
+        // Auto-riparazione silenziosa: se il contatore numerico si è corrotto in passato, sistemalo.
         if (userSeries.watched_count !== actualWatched) {
-            console.warn(`[SYS] Correzione database per ${tvId}: Contatore riparato`);
+            console.warn(`[SYS] Correzione database per ${tvId}: Contatore sballato riparato (${userSeries.watched_count} -> ${actualWatched})`);
             userSeries.watched_count = actualWatched;
         }
 
         let statusChanged = false;
 
-        // 3. Diramazione Operativa Aggiornata
+        // 3. Diramazione Operativa
         if (expectedEpisodes > 0 && actualWatched >= expectedEpisodes) {
-            if (!hasFutureEpisodes) {
-                // PROMOZIONE VERA: Hai visto tutto e non ci sono episodi nel futuro
-                if (userSeries.status !== 'completed') {
-                    userSeries.status = 'completed';
-                    console.log(`[SYS] Promozione: ${tmdbData.name} -> COMPLETATA`);
-                    statusChanged = true;
-                }
-            } else {
-                // SEI IN PARI: Ma la serie sta ancora uscendo. 
-                // Se era in completata (per il vecchio bug o a mano), riportala in corso.
-                if (userSeries.status === 'completed') {
-                    userSeries.status = 'watching';
-                    console.log(`[SYS] Correzione: ${tmdbData.name} -> IN CORSO (Episodi futuri in arrivo)`);
-                    statusChanged = true;
-                }
+            // PROMOZIONE
+            if (userSeries.status !== 'completed') {
+                userSeries.status = 'completed';
+                console.log(`[SYS] Promozione: ${tmdbData.name} -> COMPLETATA (${actualWatched}/${expectedEpisodes})`);
+                statusChanged = true;
             }
         } else if (userSeries.status === 'completed' && actualWatched < expectedEpisodes) {
-            // DECLASSAMENTO (Se aggiungono nuovi episodi passati o ne deselezioni uno)
+            // DECLASSAMENTO (Se aggiungono nuovi episodi o ne deselezioni uno)
             userSeries.status = 'watching';
             console.log(`[SYS] Declassamento: ${tmdbData.name} -> IN CORSO (Mancano episodi)`);
             statusChanged = true;
@@ -1108,7 +1083,6 @@ async function checkAutoCompletion(tvId) {
         return false;
     }
 }
-
 
 async function toggleFavorite(tvId) {
     try {
@@ -1223,14 +1197,11 @@ async function exportData() {
             exportObj[key] = await UserLibrary.getItem(key);
         }
         
-        // Metodo clonato dalla tua app "SetFree Palestra"
-        // Usa il Data URI con text/json e formatta il JSON prima di codificarlo
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObj, null, 2));
-        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObj));
         const downloadAnchorNode = document.createElement('a');
-        downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", `setfree_tv_backup_${new Date().toISOString().split('T')[0]}.json`);
         
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", `thisplay_backup_${new Date().toISOString().split('T')[0]}.json`);
         document.body.appendChild(downloadAnchorNode); 
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
@@ -1241,8 +1212,6 @@ async function exportData() {
         await customAlert("Fallimento critico durante la creazione del backup.");
     }
 }
-
-
 
 async function importData(event) {
     const file = event.target.files[0];
@@ -1269,6 +1238,46 @@ async function importData(event) {
     };
     
     reader.readAsText(file);
+}
+
+// ==========================================
+// PONTE DI MIGRAZIONE TV TIME
+// ==========================================
+
+async function handleTVTimeZip(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Sfruttiamo la tua architettura: prendiamo il loader globale esistente
+    const loader = document.getElementById('global-loader');
+    const loaderText = loader.querySelector('strong');
+    const originalLoaderText = loaderText.innerText;
+
+    // Blocca l'interfaccia e avvisa l'utente della potenziale lunga attesa
+    loaderText.innerText = "MIGRAZIONE IN CORSO...\nATTENDI, PUÒ RICHIEDERE MINUTI.";
+    loader.classList.add('active');
+
+    try {
+        // Istanziazione on-demand: le librerie vengono chiamate solo ora
+        const migrator = new TVTimeMigrator();
+        await migrator.processZip(file);
+        
+        // Uso del tuo alert di sistema brutalista
+        await customAlert("Migrazione terminata con successo. Verifica la console di sviluppo (F12) per l'elenco delle serie che TMDB non ha riconosciuto.");
+        
+        // Ricarica la vista attuale per mostrare i nuovi dati
+        if (currentContext === 'library') renderLibrary();
+        else switchTab('home');
+        
+    } catch (error) {
+        console.error("[CRITICO] Fallimento nell'importazione TV Time:", error);
+        await customAlert("Errore fatale durante la migrazione: " + error.message);
+    } finally {
+        // Ripristino rigoroso dello stato iniziale per prevenire blocchi fantasma
+        event.target.value = ''; 
+        loaderText.innerText = originalLoaderText;
+        loader.classList.remove('active');
+    }
 }
 
 // ==========================================
@@ -1358,7 +1367,6 @@ async function markSeasonWatched(tvId, seasonNum) {
         }
 
         if (modified) {
-            userSeries.last_updated = Date.now();
             await UserLibrary.setItem(String(tvId), userSeries);
             await checkAutoCompletion(tvId); 
             openDetailView(tvId); // Esegue il re-render totale per aggiornare visivamente le spunte
