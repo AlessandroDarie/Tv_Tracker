@@ -2,7 +2,11 @@ const CACHE_NAME = 'thisplay-v4';
 const ASSETS_TO_CACHE = [
     './index.html',
     './app.js',
+    './migrator.js',
     './api-config.js',
+    './manifest.json',
+    './icon_192x192.png',
+    './icon_512x512.png',
     'https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js'
 ];
 
