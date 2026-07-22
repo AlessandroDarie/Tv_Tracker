@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thisplay-v1.1';
+const CACHE_NAME = 'thisplay-v1.2';
 const ASSETS_CORE = [
     './index.html',
     './app.js',
@@ -37,6 +37,7 @@ self.addEventListener('activate', (event) => {
 
 // 3. INTERCETTAZIONE (IL MOTORE OFFLINE)
 self.addEventListener('fetch', (event) => {
+    if (!event.request.url.startsWith('http')) return;
     event.respondWith(
         caches.match(event.request)
         .then((cachedResponse) => {
