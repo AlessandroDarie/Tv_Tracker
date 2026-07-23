@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thisplay-v1.4.1';
+const CACHE_NAME = 'thisplay-v2';
 const ASSETS_CORE = [
     './index.html',
     './app.js',
