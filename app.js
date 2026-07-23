@@ -2,8 +2,45 @@
 // CONFIGURAZIONE E SETUP INIZIALE
 // ==========================================
 
-let currentContext = 'home'; // Le tue aree: 'home', 'library', 'search', 'stats'
-let lastSearchQuery = '';    // Memoria per l'ultima parola cercata
+let currentContext = 'home';
+let lastSearchQuery = '';
+let currentTvFilter = 'all';
+let currentMovieFilter = 'all';
+let activeLibraryTab = 'tv';
+
+// Motore di switch per le schede principali della Libreria
+function switchLibraryTab(tab) {
+    activeLibraryTab = tab;
+    
+    const tabTv = document.getElementById('tab-tv');
+    const tabMovie = document.getElementById('tab-movie');
+    const secTv = document.getElementById('library-tv-section');
+    const secMovie = document.getElementById('library-movie-section');
+    
+    if (tab === 'tv') {
+        tabTv.style.color = 'var(--text)';
+        tabTv.style.opacity = '1';
+        tabMovie.style.color = 'var(--text-muted)';
+        tabMovie.style.opacity = '0.5';
+        
+        secTv.style.display = 'block';
+        secMovie.style.display = 'none';
+    } else {
+        tabMovie.style.color = 'var(--text)';
+        tabMovie.style.opacity = '1';
+        tabTv.style.color = 'var(--text-muted)';
+        tabTv.style.opacity = '0.5';
+        
+        secMovie.style.display = 'block';
+        secTv.style.display = 'none';
+    }
+}
+// Gestore universale dei bottoni filtro
+function setLibraryFilter(mediaType, filterValue) {
+    if (mediaType === 'tv') currentTvFilter = filterValue;
+    if (mediaType === 'movie') currentMovieFilter = filterValue;
+    renderLibrary(); // Ricarica la vista applicando le nuove memorie
+}
 
 // Motore di Debounce: blocca le raffiche di chiamate API
 function debounce(func, delay) {
@@ -36,19 +73,22 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // MOTORE DI RICERCA E AGGIUNTA
 // ==========================================
 
-async function searchSeries() {
+async function searchMedia() {
     currentContext = 'search';
     const inputElement = document.getElementById('search-input');
     const resultsContainer = document.getElementById('search-results');
     const query = inputElement.value.trim();
+    
+    // Leggi il radio button selezionato
+    const mediaType = document.querySelector('input[name="search-type"]:checked').value;
 
     if (!query) return;
-
     lastSearchQuery = query;
 
     try {
         resultsContainer.innerHTML = '<span style="color: var(--text-muted);">Ricerca in corso...</span>';
-        const url = TMDB_CONFIG.buildSearchUrl(query);
+        // Passa il type all'API config
+        const url = TMDB_CONFIG.buildSearchUrl(query, mediaType);
         const response = await fetch(url);
         if (!response.ok) throw new Error("Errore durante la ricerca.");
         
@@ -60,24 +100,34 @@ async function searchSeries() {
             return;
         }
 
-        data.results.slice(0, 8).forEach(series => {
-            const year = series.first_air_date ? series.first_air_date.substring(0, 4) : 'N/A';
-            const item = document.createElement('div');
-            item.className = 'card';
-            item.style.display = 'flex';
-            item.style.justifyContent = 'space-between';
-            item.style.alignItems = 'center';
-            item.style.padding = '1rem';
-            item.style.marginBottom = '0';
+        data.results.slice(0, 8).forEach(item => {
+            // TMDB usa 'first_air_date' per le TV e 'release_date' per i Film
+            const rawDate = mediaType === 'tv' ? item.first_air_date : item.release_date;
+            const year = rawDate ? rawDate.substring(0, 4) : 'N/A';
+            const title = mediaType === 'tv' ? item.name : item.title;
+            const badgeColor = mediaType === 'tv' ? 'var(--text)' : 'var(--danger)';
+            const badgeText = mediaType === 'tv' ? 'TV' : 'FILM';
+
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.style.display = 'flex';
+            div.style.justifyContent = 'space-between';
+            div.style.alignItems = 'center';
+            div.style.padding = '1rem';
+            div.style.marginBottom = '0';
             
-            // Bottone "Apri" invece di "Traccia"
-            item.innerHTML = `
-                <div>
-                    <strong>${series.name}</strong> <span style="color: var(--text-muted); font-size: 0.9em;">(${year})</span>
+            div.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="font-size: 0.6rem; font-weight: 900; background: ${badgeColor}; color: var(--card-bg); padding: 0.1rem 0.3rem; border-radius: 3px; letter-spacing: 0.5px;">${badgeText}</span>
+                        <strong style="line-height: 1.1;">${title}</strong>
+                    </div>
+                    <span style="color: var(--text-muted); font-size: 0.8rem; font-weight: 700;">Anno: ${year}</span>
                 </div>
-                <button class="btn btn-outline btn-small" onclick="previewSeries(${series.id})">Apri</button>
+                <!-- Notare come passiamo il mediaType alla funzione di preview -->
+                <button class="btn btn-outline btn-small" onclick="previewMedia(${item.id}, '${mediaType}')">Apri</button>
             `;
-            resultsContainer.appendChild(item);
+            resultsContainer.appendChild(div);
         });
     } catch (error) {
         console.error(error);
@@ -86,61 +136,77 @@ async function searchSeries() {
 }
 
 // Apre l'anteprima velocemente caricando solo i dati principali
-async function previewSeries(tvId) {
+// Sostituisci l'intera funzione previewSeries con questa
+async function previewMedia(mediaId, mediaType) {
     const loader = document.getElementById('global-loader');
     loader.classList.add('active'); // Attiva blur e rotella
 
     try {
-        let tmdbData = await TmdbCache.getItem(String(tvId));
+        let tmdbData = await TmdbCache.getItem(String(mediaId));
+        
         if (!tmdbData) {
-            const url = TMDB_CONFIG.buildTvUrl(tvId);
+            // 1. Bivio strategico per la chiamata API
+            const url = mediaType === 'tv' 
+                ? TMDB_CONFIG.buildTvUrl(mediaId) 
+                : TMDB_CONFIG.buildMovieUrl(mediaId);
+                
             const response = await fetch(url);
             if (!response.ok) throw new Error("API irraggiungibile");
+            
             tmdbData = await response.json();
+            
+            // 2. INIEZIONE DEL TIPO E TIMESTAMP (Il passaggio cruciale)
+            tmdbData.media_type = mediaType;
             tmdbData.last_updated = Date.now();
-            await TmdbCache.setItem(String(tvId), tmdbData);
+            
+            await TmdbCache.setItem(String(mediaId), tmdbData);
         }
         
-        openDetailView(tvId);
+        openDetailView(mediaId);
         switchTab('detail');
     } catch (error) {
         console.error(error);
         await customAlert("Errore durante il caricamento dell'anteprima.");
     } finally {
-        loader.classList.remove('active'); // Spegne il loader in ogni caso
+        loader.classList.remove('active');
     }
 }
 
-// Converte un'anteprima in una serie tracciata e fa partire il download pesante
-async function addToLibraryFromPreview(tvId) {
+
+async function addToLibraryFromPreview(mediaId) {
     try {
-        const tmdbData = await TmdbCache.getItem(String(tvId));
+        const tmdbData = await TmdbCache.getItem(String(mediaId));
         if (!tmdbData) return;
 
+        // Recuperiamo il DNA che abbiamo iniettato prima, con fallback di sicurezza
+        const type = tmdbData.media_type || 'tv'; 
+
         const userSeriesModel = {
-            id: tvId,
-            status: "watching", // Stato di default: in corso
+            id: mediaId,
+            status: "watching", 
             added_at: Date.now(),
             watched_count: 0,
             watched_minutes: 0,
             progress: {},
-            is_favorite: false
+            is_favorite: false,
+            media_type: type // Salviamo il tipo anche nel DB dell'utente
         };
         
-        await UserLibrary.setItem(String(tvId), userSeriesModel);
-        console.log(`[SUCCESSO] "${tmdbData.name}" inizializzata in libreria!`);
+        await UserLibrary.setItem(String(mediaId), userSeriesModel);
         
-        // Risveglia il download asincrono in background
-        if (tmdbData.seasons && tmdbData.seasons.length > 0) {
-            backgroundSeasonSync(tvId, tmdbData.seasons);
+        const title = type === 'tv' ? tmdbData.name : tmdbData.title;
+        console.log(`[SUCCESSO] "${title}" aggiunto in libreria!`);
+        
+        // Risveglia il download asincrono SOLO se è una serie
+        if (type === 'tv' && tmdbData.seasons && tmdbData.seasons.length > 0) {
+            backgroundSeasonSync(mediaId, tmdbData.seasons);
         }
 
-        // Ricarica la vista dettaglio (passerà automaticamente da Anteprima a Modalità Piena)
-        openDetailView(tvId);
+        openDetailView(mediaId);
         
     } catch (error) {
         console.error("[CRITICO] Fallimento durante l'aggiunta:", error);
-        await customAlert("Errore critico durante l'aggiunta della serie.");
+        await customAlert("Errore critico durante l'aggiunta del titolo.");
     }
 }
 
@@ -441,19 +507,28 @@ function getLastInteraction(userSeries) {
     return Math.max(...Object.values(userSeries.progress));
 }
 
-// Fabbrica DOM per la singola scheda della serie (Evita codice duplicato)
+// Fabbrica DOM per la singola scheda della serie/film
 function createSeriesCardElement(item) {
-    const posterUrl = item.tmdb.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdb.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Image';
+    const isMovie = item.tmdb.media_type === 'movie' || item.user.media_type === 'movie';
+    const title = isMovie ? item.tmdb.title : item.tmdb.name;
+    const posterUrl = item.tmdb.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.tmdb.poster_path}` : 'https://placehold.co/500x750/27272a/a1a1aa?text=No+Image';
     
     let statusLabel = '';
     let statusColor = 'var(--text-muted)';
     
-    if (item.user.status === 'completed') { statusLabel = 'COMPLETATA'; statusColor = 'var(--success)'; }
+    if (item.user.status === 'completed') { statusLabel = isMovie ? 'VISTO' : 'COMPLETATA'; statusColor = 'var(--success)'; }
     else if (item.user.status === 'paused') { statusLabel = 'IN PAUSA'; statusColor = 'var(--text)'; }
-    else if (item.user.watched_count === 0) { statusLabel = 'DA VEDERE'; }
+    else if (item.user.status === 'planned' || item.user.watched_count === 0) { statusLabel = 'DA VEDERE'; }
     else { statusLabel = 'IN CORSO'; statusColor = 'var(--primary)'; }
 
-    const favBadge = item.user.is_favorite ? `<div style="position: absolute; top: 5px; right: 5px; background: var(--card-bg); border-radius: 50%; padding: 4px; border: 1px solid var(--danger); color: var(--danger); line-height: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>` : '';
+    const favBadge = item.user.is_favorite ? `<div style="position: absolute; top: 5px; right: 5px; background: var(--card-bg); border-radius: 50%; padding: 4px; border: 1px solid var(--danger); color: var(--danger); line-height: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>` : '';
+    
+    // LOGICA BADGE DINAMICO
+    const badgeBg = isMovie ? 'var(--danger)' : 'var(--text)';
+    const badgeColor = isMovie ? '#ffffff' : 'var(--bg)';
+    const badgeText = isMovie ? 'FILM' : 'SERIE';
+    
+    const typeBadge = `<div style="position: absolute; top: 5px; left: 5px; background: ${badgeBg}; color: ${badgeColor}; font-size: 0.6rem; font-weight: 900; padding: 0.15rem 0.35rem; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(0,0,0,0.5);">${badgeText}</div>`;
 
     const card = document.createElement('div');
     card.className = 'series-card';
@@ -464,142 +539,149 @@ function createSeriesCardElement(item) {
     };
 
     card.innerHTML = `
+        ${typeBadge}
         ${favBadge}
-        <img src="${posterUrl}" alt="${item.tmdb.name}">
+        <img src="${posterUrl}" alt="${title}">
         <div class="series-card-content">
-            <span class="series-title" title="${item.tmdb.name}">${item.tmdb.name}</span>
+            <span class="series-title" title="${title}">${title}</span>
             <span class="series-status" style="color: ${statusColor};">${statusLabel}</span>
         </div>
     `;
     return card;
 }
 
-// Renderizza il cruscotto principale dell'utente con filtri, ordinamento e multi-sezione
-async function renderLibrary(currentFilter = 'all') {
+async function renderLibrary() {
     currentContext = 'library';
-    const container = document.getElementById('library-grid');
-    const filterButtons = document.querySelectorAll('#library-filters button');
-    
-    filterButtons.forEach(btn => btn.classList.remove('active'));
-    const activeBtnIndex = ['all', 'watching', 'planned', 'paused', 'completed', 'favorite'].indexOf(currentFilter);
-    if(activeBtnIndex >= 0) filterButtons[activeBtnIndex].classList.add('active');
+    const tvGrid = document.getElementById('tv-grid');
+    const movieGrid = document.getElementById('movie-grid');
 
-    // Cambiamo la struttura per ospitare intestazioni multiple, non usiamo più la grid CSS direttamente sul contenitore padre
-    container.className = ''; 
-    container.innerHTML = '<span style="color: var(--text-muted);">Estrazione e smistamento dati...</span>';
+    // 1. Aggiornamento Visivo Bottoni UI (Serie)
+    const tvButtons = document.querySelectorAll('#tv-filters button');
+    tvButtons.forEach(btn => btn.classList.remove('active'));
+    const activeTvIndex = ['all', 'watching', 'planned', 'paused', 'completed', 'favorite'].indexOf(currentTvFilter);
+    if(activeTvIndex >= 0) tvButtons[activeTvIndex].classList.add('active');
+
+    // 2. Aggiornamento Visivo Bottoni UI (Film)
+    const movieButtons = document.querySelectorAll('#movie-filters button');
+    movieButtons.forEach(btn => btn.classList.remove('active'));
+    const activeMovieIndex = ['all', 'planned', 'completed', 'favorite'].indexOf(currentMovieFilter);
+    if(activeMovieIndex >= 0) movieButtons[activeMovieIndex].classList.add('active');
+
+    tvGrid.innerHTML = '<span style="color: var(--text-muted);">Elaborazione dati...</span>';
+    movieGrid.innerHTML = '<span style="color: var(--text-muted);">Elaborazione dati...</span>';
 
     try {
         const keys = await UserLibrary.keys();
-        if (keys.length === 0) {
-            container.innerHTML = '<span style="color: var(--text-muted); display: block; text-align: center; padding: 2rem 0;">La tua libreria è vuota. Cerca una serie per iniziare.</span>';
-            return;
-        }
-
         let seriesArray = [];
+        let movieArray = [];
 
-        // 1. Estrazione dati massiva
+        // ESTRAZIONE MASSIVA E SMISTAMENTO ALLA RADICE
         for (const key of keys) {
-            const userSeries = await UserLibrary.getItem(key);
+            const userItem = await UserLibrary.getItem(key);
             let tmdbData = await TmdbCache.getItem(key);
-
-            if (!tmdbData) {
-                try {
-                    const url = TMDB_CONFIG.buildTvUrl(key);
-                    const res = await fetch(url);
-                    if (!res.ok) throw new Error("API irraggiungibile");
-                    tmdbData = await res.json();
-                    tmdbData.last_updated = Date.now();
-                    await TmdbCache.setItem(key, tmdbData);
-                    if (tmdbData.seasons && tmdbData.seasons.length > 0) backgroundSeasonSync(key, tmdbData.seasons);
-                } catch (e) { continue; }
-            }
             
-            if (!userSeries.status) userSeries.status = 'watching';
-            seriesArray.push({ key: key, user: userSeries, tmdb: tmdbData, lastInteraction: getLastInteraction(userSeries) });
+            if (!tmdbData) continue; // Ignora i falliti di cache, ci pensa l'updater in background
+
+            const isMovie = tmdbData.media_type === 'movie' || userItem.media_type === 'movie';
+            const itemData = { key: key, user: userItem, tmdb: tmdbData, lastInteraction: getLastInteraction(userItem) };
+
+            if (isMovie) {
+                if (!userItem.status) userItem.status = 'planned';
+                movieArray.push(itemData);
+            } else {
+                if (!userItem.status) userItem.status = 'watching';
+                seriesArray.push(itemData);
+            }
         }
 
-        // 2. Ordinamento assoluto dal più recente al meno recente
+        // Ordinamento cronologico assoluto per entrambi i silos
         seriesArray.sort((a, b) => b.lastInteraction - a.lastInteraction);
-        container.innerHTML = '';
+        movieArray.sort((a, b) => b.lastInteraction - a.lastInteraction);
 
-        // Funzione filtro locale
-        const filterSeries = (type) => seriesArray.filter(item => {
-            const eps = item.user.watched_count || 0;
-            switch(type) {
-                case 'watching': return item.user.status === 'watching' && eps > 0;
-                case 'planned': return item.user.status === 'watching' && eps === 0;
-                case 'paused': return item.user.status === 'paused';
-                case 'completed': return item.user.status === 'completed';
-                case 'favorite': return item.user.is_favorite === true;
-                default: return true;
-            }
-        });
+        tvGrid.innerHTML = '';
+        movieGrid.innerHTML = '';
 
-        // 3. DIRAMAZIONE LOGICA: Panoramica vs Categoria Singola
-        if (currentFilter === 'all') {
-            const categories = [
-                { id: 'watching', title: 'In Corso' },
-                { id: 'planned', title: 'Da Vedere' },
-                { id: 'paused', title: 'In Pausa' },
-                { id: 'completed', title: 'Viste' },
-                { id: 'favorite', title: 'Preferite', color: 'var(--danger)' }
-            ];
-
-            let hasContent = false;
-
-            categories.forEach(cat => {
-                const catSeries = filterSeries(cat.id);
-                if (catSeries.length === 0) return; // Salta la sezione se vuota
-                hasContent = true;
-
-                // Intestazione Brutalista della Sezione
-                const headerColor = cat.color || 'var(--text)';
-                const headerHtml = `
-                    <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: ${hasContent ? '0' : '2rem'}; margin-bottom: 1rem; border-bottom: 2px solid ${headerColor}; padding-bottom: 0.5rem; padding-top: 2rem;">
-                        <h3 style="margin: 0; text-transform: uppercase; font-weight: 900; color: ${headerColor}; letter-spacing: -0.5px;">${cat.title}</h3>
-                        ${catSeries.length > 6 ? `<button class="btn btn-outline btn-small" style="font-weight: 800; border-color: ${headerColor}; color: ${headerColor};" onclick="renderLibrary('${cat.id}')">Vedi Tutte (${catSeries.length})</button>` : ''}
-                    </div>
-                `;
-                
-                const sectionDiv = document.createElement('div');
-                sectionDiv.innerHTML = headerHtml;
-                container.appendChild(sectionDiv);
-
-                // Griglia per questa specifica sezione
-                const subGrid = document.createElement('div');
-                subGrid.className = 'library-grid';
-                
-                // Prendi solo i primi 6 e usa la fabbrica DOM
-                catSeries.slice(0, 6).forEach(item => {
-                    subGrid.appendChild(createSeriesCardElement(item));
-                });
-                
-                container.appendChild(subGrid);
+        // MOTORE DI RENDERING SEZIONI INTERNO
+        const buildSection = (array, currentFilter, container, typeConfig) => {
+            const filterLogic = (type) => array.filter(item => {
+                const eps = item.user.watched_count || 0;
+                switch(type) {
+                    case 'watching': return item.user.status === 'watching' && eps > 0;
+                    case 'planned': return (item.user.status === 'watching' && eps === 0) || item.user.status === 'planned';
+                    case 'paused': return item.user.status === 'paused';
+                    case 'completed': return item.user.status === 'completed';
+                    case 'favorite': return item.user.is_favorite === true;
+                    default: return true;
+                }
             });
 
-            if (!hasContent) container.innerHTML = '<span style="color: var(--text-muted); display: block; text-align: center; padding: 2rem 0;">La tua libreria è vuota.</span>';
-
-        } else {
-            // MODALITÀ SINGOLA CATEGORIA (Comportamento precedente)
-            const targetSeries = filterSeries(currentFilter);
-            
-            if (targetSeries.length === 0) {
-                container.innerHTML = `<span style="color: var(--text-muted); display: block; text-align: center; padding: 2rem 0;">Nessuna serie in questa categoria.</span>`;
+            if (array.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-muted); display: block; padding: 1rem 0;">Nessun titolo salvato in questa sezione.</span>';
                 return;
             }
 
-            const grid = document.createElement('div');
-            grid.className = 'library-grid';
-            
-            targetSeries.forEach(item => {
-                grid.appendChild(createSeriesCardElement(item));
-            });
-            
-            container.appendChild(grid);
-        }
+            if (currentFilter === 'all') {
+                let hasContent = false;
+                typeConfig.forEach(cat => {
+                    const catItems = filterLogic(cat.id);
+                    if (catItems.length === 0) return;
+                    hasContent = true;
+
+                    const headerColor = cat.color || 'var(--text)';
+                    const sectionDiv = document.createElement('div');
+                    
+                    sectionDiv.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: ${hasContent && container.innerHTML !== '' ? '2rem' : '0'}; margin-bottom: 1rem; border-bottom: 2px solid ${headerColor}; padding-bottom: 0.5rem;">
+                            <h3 style="margin: 0; text-transform: uppercase; font-weight: 900; color: ${headerColor}; letter-spacing: -0.5px; font-size: 1.1rem;">${cat.title}</h3>
+                            ${catItems.length > 6 ? `<button class="btn btn-outline btn-small" style="font-weight: 800; border-color: ${headerColor}; color: ${headerColor}; padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setLibraryFilter('${typeConfig[0].mediaType}', '${cat.id}')">Vedi Tutte (${catItems.length})</button>` : ''}
+                        </div>
+                    `;
+                    const subGrid = document.createElement('div');
+                    subGrid.className = 'library-grid';
+                    
+                    catItems.slice(0, 6).forEach(item => subGrid.appendChild(createSeriesCardElement(item)));
+                    
+                    sectionDiv.appendChild(subGrid);
+                    container.appendChild(sectionDiv);
+                });
+
+                if (!hasContent) container.innerHTML = '<span style="color: var(--text-muted); display: block; padding: 1rem 0;">La tua lista è completamente vuota.</span>';
+
+            } else {
+                const targetItems = filterLogic(currentFilter);
+                if (targetItems.length === 0) {
+                    container.innerHTML = `<span style="color: var(--text-muted); display: block; padding: 1rem 0;">Nessun titolo in questa categoria.</span>`;
+                    return;
+                }
+                const grid = document.createElement('div');
+                grid.className = 'library-grid';
+                targetItems.forEach(item => grid.appendChild(createSeriesCardElement(item)));
+                container.appendChild(grid);
+            }
+        };
+
+        // Configurazioni logiche per le categorie
+        const tvConfig = [
+            { id: 'watching', title: 'In Corso', mediaType: 'tv' },
+            { id: 'planned', title: 'Da Vedere', mediaType: 'tv' },
+            { id: 'paused', title: 'In Pausa', mediaType: 'tv' },
+            { id: 'completed', title: 'Viste', mediaType: 'tv' },
+            { id: 'favorite', title: 'Preferite', color: 'var(--danger)', mediaType: 'tv' }
+        ];
+
+        const movieConfig = [
+            { id: 'planned', title: 'Da Vedere', mediaType: 'movie' },
+            { id: 'completed', title: 'Visti', mediaType: 'movie' },
+            { id: 'favorite', title: 'Preferiti', color: 'var(--danger)', mediaType: 'movie' }
+        ];
+
+        // Esecuzione parallela
+        buildSection(seriesArray, currentTvFilter, tvGrid, tvConfig);
+        buildSection(movieArray, currentMovieFilter, movieGrid, movieConfig);
+
     } catch (error) {
         console.error(error);
-        container.innerHTML = '<span style="color: var(--danger); display: block;">Errore critico database locale.</span>';
+        tvGrid.innerHTML = '<span style="color: var(--danger); display: block;">Errore critico durante la scansione del database.</span>';
     }
 }
 
@@ -665,18 +747,22 @@ async function renderStats() {
     }
 }
 
-async function openDetailView(tvId) {
-    window.currentOpenTvId = String(tvId);
+async function openDetailView(mediaId) {
+    window.currentOpenTvId = String(mediaId); // Manteniamo la variabile globale per compatibilità
     const detailContent = document.getElementById('detail-content');
     detailContent.innerHTML = '<span style="color: var(--text-muted);">Estrazione dati...</span>';
 
     try {
-        const userSeries = await UserLibrary.getItem(String(tvId));
-        const tmdbData = await TmdbCache.getItem(String(tvId));
+        const userSeries = await UserLibrary.getItem(String(mediaId));
+        const tmdbData = await TmdbCache.getItem(String(mediaId));
         
         if (!tmdbData) throw new Error("Dati TMDB mancanti.");
 
         const isPreview = !userSeries;
+        const mediaType = tmdbData.media_type || 'tv'; // Fallback per le vecchie serie già salvate
+        const isMovie = mediaType === 'movie';
+        
+        const title = isMovie ? tmdbData.title : tmdbData.name;
 
         const bannerUrl = tmdbData.backdrop_path 
             ? `https://image.tmdb.org/t/p/w780${tmdbData.backdrop_path}` 
@@ -690,22 +776,17 @@ async function openDetailView(tvId) {
         // ==========================================
         // ESTRAZIONE DATI AGGIUNTIVI (PROVIDERS, TRAILER, CAST)
         // ==========================================
-
         let providersHTML = '';
         if (tmdbData['watch/providers']?.results?.IT) {
             const itData = tmdbData['watch/providers'].results.IT;
             const providers = itData.flatrate || itData.free || [];
-            
             if (providers.length > 0) {
                 const uniqueProviders = Array.from(new Map(providers.map(p => [p.provider_id, p])).values());
-                
                 providersHTML = `
                     <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem;">
                         <strong style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;">Su:</strong>
                         <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
-                            ${uniqueProviders.map(p => `
-                                <img src="https://image.tmdb.org/t/p/original${p.logo_path}" alt="${p.provider_name}" title="${p.provider_name}" style="width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--border);">
-                            `).join('')}
+                            ${uniqueProviders.map(p => `<img src="https://image.tmdb.org/t/p/original${p.logo_path}" alt="${p.provider_name}" title="${p.provider_name}" style="width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--border);">`).join('')}
                         </div>
                     </div>
                 `;
@@ -718,8 +799,7 @@ async function openDetailView(tvId) {
             if (trailer) {
                 trailerHTML = `
                     <a href="https://www.youtube.com/watch?v=${trailer.key}" target="_blank" class="btn btn-outline btn-small" style="margin-bottom: 1.5rem; display: inline-flex; align-items: center; gap: 0.4rem; border-color: var(--danger); color: var(--danger); text-decoration: none;">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        Trailer
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>Trailer
                     </a>
                 `;
             }
@@ -749,185 +829,167 @@ async function openDetailView(tvId) {
         let html = `
             ${bannerHTML}
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; gap: 1rem;">
-                <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${tmdbData.name}</h2>
-                ${!isPreview ? `<button class="btn btn-danger btn-small" style="flex-shrink: 0;" onclick="removeSeries(${tvId})">Elimina</button>` : ''}
+                <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${title}</h2>
+                ${!isPreview ? `<button class="btn btn-danger btn-small" style="flex-shrink: 0;" onclick="removeSeries(${mediaId})">Elimina</button>` : ''}
             </div>
-            
             ${trailerHTML}
-            
             <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.5;">${tmdbData.overview || 'Nessuna sinossi disponibile.'}</p>
-            
             ${providersHTML}
             ${castHTML}
         `;
         
         if (isPreview) {
-            // 2. MODALITÀ ANTEPRIMA: Niente plancia, solo bottone gigante
             html += `
                 <div style="margin-bottom: 1.5rem; background: var(--input-bg); padding: 1.25rem; border: 1.5px solid var(--primary); text-align: center;">
-                    <p style="margin-bottom: 1rem; color: var(--text-muted); font-weight: 700; font-size: 0.85rem; text-transform: uppercase;">Questa serie non è tracciata</p>
-                    <button class="btn btn-success" style="width: 100%; font-size: 1.1rem; padding: 1rem; font-weight: 900;" onclick="addToLibraryFromPreview(${tvId})">AGGIUNGI ALLA LIBRERIA</button>
+                    <p style="margin-bottom: 1rem; color: var(--text-muted); font-weight: 700; font-size: 0.85rem; text-transform: uppercase;">Questo titolo non è tracciato</p>
+                    <button class="btn btn-success" style="width: 100%; font-size: 1.1rem; padding: 1rem; font-weight: 900;" onclick="addToLibraryFromPreview(${mediaId})">AGGIUNGI ALLA LIBRERIA</button>
                 </div>
             `;
         } else {
-            // 3. MODALITÀ TRACCIATA: Plancia di controllo e rendering stagioni
             const isFav = userSeries.is_favorite === true;
             const favIconFill = isFav ? 'currentColor' : 'none';
             const favColor = isFav ? 'var(--danger)' : 'var(--text-muted)';
             const favBorder = isFav ? 'var(--danger)' : 'var(--border)';
-            const currentStatus = userSeries.status || 'watching';
+            const currentStatus = userSeries.status || (isMovie ? 'planned' : 'watching');
+
+            // Select dinamica in base al tipo di media
+            const statusOptions = isMovie 
+                ? `<option value="planned" ${currentStatus === 'planned' || currentStatus === 'watching' ? 'selected' : ''}>Da Vedere</option>
+                   <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Visto</option>`
+                : `<option value="watching" ${currentStatus === 'watching' ? 'selected' : ''}>In Corso / Da Vedere</option>
+                   <option value="paused" ${currentStatus === 'paused' ? 'selected' : ''}>In Pausa</option>
+                   <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Completata</option>`;
 
             html += `
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; background: var(--input-bg); padding: 0.75rem; border: 1.5px solid var(--text);">
-                    <select id="status-select-${tvId}" onchange="changeSeriesStatus(${tvId}, this.value)" style="flex: 1; padding: 0.5rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-weight: 700; text-transform: uppercase; font-size: 0.8rem; outline: none;">
-                        <option value="watching" ${currentStatus === 'watching' ? 'selected' : ''}>In Corso / Da Vedere</option>
-                        <option value="paused" ${currentStatus === 'paused' ? 'selected' : ''}>In Pausa</option>
-                        <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Completata</option>
+                    <select id="status-select-${mediaId}" onchange="changeSeriesStatus(${mediaId}, this.value)" style="flex: 1; padding: 0.5rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-weight: 700; text-transform: uppercase; font-size: 0.8rem; outline: none;">
+                        ${statusOptions}
                     </select>
                     
-                    <button onclick="toggleFavorite(${tvId})" class="btn btn-outline" style="padding: 0.5rem 1rem; color: ${favColor}; border-color: ${favBorder};">
+                    <button onclick="toggleFavorite(${mediaId})" class="btn btn-outline" style="padding: 0.5rem 1rem; color: ${favColor}; border-color: ${favBorder};">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="${favIconFill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
                     </button>
                 </div>
             `;
 
-            if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
+            // BIVIO STRUTTURALE: FILM vs SERIE
+            if (isMovie) {
+                const isWatched = userSeries.status === 'completed';
+                const actionClass = isWatched ? 'btn-outline' : 'btn-success';
+                const actionText = isWatched ? 'RIMUOVI SPUNTA' : 'SEGNA COME VISTO';
+                const actionIcon = isWatched 
+                    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>`
+                    : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                
+                const runtimeDisplay = tmdbData.runtime ? `${tmdbData.runtime} min` : 'N/D';
+                const releaseDate = tmdbData.release_date ? tmdbData.release_date.split('-').reverse().join('/') : 'TBA';
+                
                 html += `
-                    <div class="card" style="border-color: var(--danger); display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
-                        <div style="width: 24px; height: 24px; border: 3px solid var(--danger); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>
-                        <p style="color: var(--danger); font-weight: 800; margin:0; font-size: 0.95rem; line-height: 1.3;">
-                            Sincronizzazione stagioni in corso...<br>
-                            <span style="font-size: 0.8rem; font-weight: 600; opacity: 0.8;">Attendi qualche secondo, l'interfaccia si aggiornerà da sola.</span>
-                        </p>
+                    <div style="border: 1.5px solid var(--text); border-left: 8px solid ${isWatched ? 'var(--success)' : 'var(--primary)'}; background: var(--card-bg); padding: 1.5rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">
+                            <span>Uscita: ${releaseDate}</span>
+                            <span>Durata: ${runtimeDisplay}</span>
+                        </div>
+                        <button class="btn ${actionClass}" style="width: 100%; font-size: 1.1rem; padding: 1rem; font-weight: 900; gap: 0.5rem; display: flex; justify-content: center; align-items: center;" onclick="toggleMovieWatched(${mediaId})">
+                            ${actionIcon} ${actionText}
+                        </button>
                     </div>
                 `;
             } else {
-                const today = new Date().toISOString().split('T')[0];
-
-                // All'interno di openDetailView, nel ciclo delle stagioni:
-                for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
-                    const bodyId = `season-body-${tvId}-${seasonNum}`;
-                    
-                    let validEpsInSeason = 0;
-                    let watchedEpsInSeason = 0;
-                    const totalSeasonEps = seasonData.episodes ? seasonData.episodes.length : 0;
-
-                    if (seasonData.episodes) {
-                        for (const ep of seasonData.episodes) {
-                            const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                            const isWatched = userSeries.progress && userSeries.progress[epKey];
-
-                            if (isWatched || (ep.air_date && ep.air_date <= today)) {
-                                validEpsInSeason++;
-                                if (isWatched) watchedEpsInSeason++;
-                            }
-                        }
-                    }
-
-                    const isSeasonCompleted = totalSeasonEps > 0 && watchedEpsInSeason >= totalSeasonEps;
-
-                    const borderColor = isSeasonCompleted ? 'var(--success)' : 'var(--primary)';
-                    const opacity = isSeasonCompleted ? '0.6' : '1';
-                    const titleColor = isSeasonCompleted ? 'var(--text-muted)' : 'var(--text)';
-
-                    const actionHTML = isSeasonCompleted 
-                        ? `<span style="font-size: 0.8rem; font-weight: 900; color: var(--success); letter-spacing: 0.5px; flex-shrink: 0;">✓ COMPLETATA</span>` 
-                        : `<button class="btn btn-outline btn-small" style="font-size: 0.7rem; font-weight: 800; flex-shrink: 0;" onclick="event.stopPropagation(); markSeasonWatched(${tvId}, ${seasonNum})">COMPLETA STAGIONE</button>`;
-
+                // ESECUZIONE NATIVA DEL MOTORE SERIE TV
+                if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
                     html += `
-                        <div style="border: 1.5px solid var(--text); border-left: 8px solid ${borderColor}; background: var(--card-bg); margin-bottom: 1rem; border-radius: 0; opacity: ${opacity}; transition: opacity 0.2s;">
-                            <div onclick="toggleSeasonPanel(${tvId}, ${seasonNum}, '${bodyId}')" 
-                                style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
-                                <div>
-                                    <strong style="font-size: 1.2rem; text-transform: uppercase; display: block; color: ${titleColor}; transition: color 0.2s;">Stagione ${seasonNum}</strong>
-                                    <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">
-                                        ${watchedEpsInSeason}/${totalSeasonEps} EPISODI <span style="font-size: 0.7rem; font-weight: 400; opacity: 0.7;">(Clicca per espandere)</span>
-                                    </div>
-                                </div>
-                                ${actionHTML}
-                            </div>
-                            <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
+                        <div class="card" style="border-color: var(--danger); display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
+                            <div style="width: 24px; height: 24px; border: 3px solid var(--danger); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>
+                            <p style="color: var(--danger); font-weight: 800; margin:0; font-size: 0.95rem; line-height: 1.3;">Sincronizzazione stagioni in corso...<br><span style="font-size: 0.8rem; font-weight: 600; opacity: 0.8;">Attendi qualche secondo, l'interfaccia si aggiornerà da sola.</span></p>
+                        </div>
                     `;
-                    
-                    let firstUnwatchedFound = false;
-                    
-                    if (seasonData.episodes && seasonData.episodes.length > 0) {
-                        seasonData.episodes.forEach((ep, i) => {
-                            const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                            const isWatched = userSeries.progress && userSeries.progress[epKey];
-                            
-                            const isFuture = ep.air_date && ep.air_date > today;
-                            const dateStr = ep.air_date ? ep.air_date.split('-').reverse().join('/') : "TBA";
-                            
-                            let rowIdAttr = '';
-                            if (!isWatched && !firstUnwatchedFound && !isFuture) {
-                                rowIdAttr = `id="first-unwatched-${tvId}-${seasonNum}"`;
-                                firstUnwatchedFound = true;
-                            }
-                            
-                            const titleClass = isWatched ? 'ep-title watched' : 'ep-title';
-                            const titleStyle = isWatched ? 'color: var(--text-muted); text-decoration: line-through;' : 'color: var(--text);';
-                            const isLast = i === seasonData.episodes.length - 1;
-                            const borderBottom = isLast ? '' : 'border-bottom: 1px solid var(--border);';
+                } else {
+                    const today = new Date().toISOString().split('T')[0];
+                    for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
+                        const bodyId = `season-body-${mediaId}-${seasonNum}`;
+                        let validEpsInSeason = 0;
+                        let watchedEpsInSeason = 0;
+                        const totalSeasonEps = seasonData.episodes ? seasonData.episodes.length : 0;
 
-                            const calendarSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
-                            // ==========================================
-                            // ESTRAZIONE DATI E GENERAZIONE BOTTONI SVG
-                            // ==========================================
-                            let actionBtnHTML = '';
-                            if (isFuture && !isWatched) {
-                                // Lucchetto per episodi non ancora usciti
-                                actionBtnHTML = `
-                                    <button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0.4; cursor: not-allowed; border-color: var(--border); color: var(--text-muted); border-radius: 50%;" disabled title="In onda il ${dateStr}">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                                    </button>`;
-                            } else {
-                                if (isWatched) {
-                                    // Spunta verde pesante
-                                    actionBtnHTML = `
-                                        <button id="btn-${tvId}-${epKey}" class="btn btn-success" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);" onclick="toggleEpisode(${tvId}, '${epKey}')" title="Rimuovi spunta">
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                        </button>`;
-                                } else {
-                                    // Cerchio vuoto da spuntare
-                                    actionBtnHTML = `
-                                        <button id="btn-${tvId}-${epKey}" class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; border-color: var(--text-muted); color: var(--text-muted);" onclick="toggleEpisode(${tvId}, '${epKey}')" title="Segna come visto">
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg>
-                                        </button>`;
+                        if (seasonData.episodes) {
+                            for (const ep of seasonData.episodes) {
+                                const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                                const isWatched = userSeries.progress && userSeries.progress[epKey];
+                                if (isWatched || (ep.air_date && ep.air_date <= today)) {
+                                    validEpsInSeason++;
+                                    if (isWatched) watchedEpsInSeason++;
                                 }
                             }
+                        }
 
-                            const stillUrl = ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : 'https://placehold.co/300x170/27272a/a1a1aa?text=TBA';
-                            const rowOpacity = isWatched ? '0.5' : '1';
-                            const imgFilter = isWatched ? 'grayscale(100%)' : 'none';
+                        const isSeasonCompleted = totalSeasonEps > 0 && watchedEpsInSeason >= totalSeasonEps;
+                        const borderColor = isSeasonCompleted ? 'var(--success)' : 'var(--primary)';
+                        const opacity = isSeasonCompleted ? '0.6' : '1';
+                        const titleColor = isSeasonCompleted ? 'var(--text-muted)' : 'var(--text)';
+                        const actionHTML = isSeasonCompleted 
+                            ? `<span style="font-size: 0.8rem; font-weight: 900; color: var(--success); letter-spacing: 0.5px; flex-shrink: 0;">✓ COMPLETATA</span>` 
+                            : `<button class="btn btn-outline btn-small" style="font-size: 0.7rem; font-weight: 800; flex-shrink: 0;" onclick="event.stopPropagation(); markSeasonWatched(${mediaId}, ${seasonNum})">COMPLETA STAGIONE</button>`;
 
-                            // Rimosso il word-break letale e gestiti i margini di sicurezza
-                            html += `
-                                <div ${rowIdAttr} style="display: flex; gap: 0.75rem; align-items: center; padding: 1rem 0; ${borderBottom} opacity: ${rowOpacity}; transition: opacity 0.2s, background-color 0.2s; cursor: pointer; border-radius: 4px;" onclick="openEpisodeDetails(${tvId}, ${seasonNum}, ${ep.episode_number})">
-                                    
-                                    <img src="${stillUrl}" alt="Episodio ${ep.episode_number}" style="width: 100px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; filter: ${imgFilter}; transition: filter 0.2s;">
-                                    
-                                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
-                                        <span id="title-${tvId}-${epKey}" class="${titleClass}" style="display: block; font-size: 0.95rem; font-weight: 800; ${titleStyle} line-height: 1.2; margin-bottom: 0.3rem; white-space: normal; padding-right: 0.5rem;">
-                                            <span style="color: var(--text-muted); margin-right: 0.1rem;">${ep.episode_number}.</span> 
-                                            ${ep.name}
-                                        </span>
-                                        <span style="display: block; font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center;">
-                                            ${calendarSvg} ${dateStr}
-                                        </span>
+                        html += `
+                            <div style="border: 1.5px solid var(--text); border-left: 8px solid ${borderColor}; background: var(--card-bg); margin-bottom: 1rem; border-radius: 0; opacity: ${opacity}; transition: opacity 0.2s;">
+                                <div onclick="toggleSeasonPanel(${mediaId}, ${seasonNum}, '${bodyId}')" style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
+                                    <div>
+                                        <strong style="font-size: 1.2rem; text-transform: uppercase; display: block; color: ${titleColor}; transition: color 0.2s;">Stagione ${seasonNum}</strong>
+                                        <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">${watchedEpsInSeason}/${totalSeasonEps} EPISODI <span style="font-size: 0.7rem; font-weight: 400; opacity: 0.7;">(Clicca per espandere)</span></div>
                                     </div>
-
-                                    <div style="flex-shrink: 0; padding-left: 0.5rem;" onclick="event.stopPropagation();">
-                                        ${actionBtnHTML}
-                                    </div>
+                                    ${actionHTML}
                                 </div>
-                            `;
-                        });
-                    } else {
-                        html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio trovato.</div>`;
+                                <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
+                        `;
+                        
+                        let firstUnwatchedFound = false;
+                        if (seasonData.episodes && seasonData.episodes.length > 0) {
+                            seasonData.episodes.forEach((ep, i) => {
+                                const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                                const isWatched = userSeries.progress && userSeries.progress[epKey];
+                                const isFuture = ep.air_date && ep.air_date > today;
+                                const dateStr = ep.air_date ? ep.air_date.split('-').reverse().join('/') : "TBA";
+                                
+                                let rowIdAttr = '';
+                                if (!isWatched && !firstUnwatchedFound && !isFuture) {
+                                    rowIdAttr = `id="first-unwatched-${mediaId}-${seasonNum}"`;
+                                    firstUnwatchedFound = true;
+                                }
+                                
+                                const titleClass = isWatched ? 'ep-title watched' : 'ep-title';
+                                const titleStyle = isWatched ? 'color: var(--text-muted); text-decoration: line-through;' : 'color: var(--text);';
+                                const borderBottom = (i === seasonData.episodes.length - 1) ? '' : 'border-bottom: 1px solid var(--border);';
+                                const calendarSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
+
+                                let actionBtnHTML = '';
+                                if (isFuture && !isWatched) {
+                                    actionBtnHTML = `<button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0.4; cursor: not-allowed; border-color: var(--border); color: var(--text-muted); border-radius: 50%;" disabled title="In onda il ${dateStr}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></button>`;
+                                } else {
+                                    if (isWatched) actionBtnHTML = `<button id="btn-${mediaId}-${epKey}" class="btn btn-success" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);" onclick="toggleEpisode(${mediaId}, '${epKey}')" title="Rimuovi spunta"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>`;
+                                    else actionBtnHTML = `<button id="btn-${mediaId}-${epKey}" class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; border-color: var(--text-muted); color: var(--text-muted);" onclick="toggleEpisode(${mediaId}, '${epKey}')" title="Segna come visto"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg></button>`;
+                                }
+
+                                const stillUrl = ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : 'https://placehold.co/300x170/27272a/a1a1aa?text=TBA';
+                                const rowOpacity = isWatched ? '0.5' : '1';
+                                const imgFilter = isWatched ? 'grayscale(100%)' : 'none';
+
+                                html += `
+                                    <div ${rowIdAttr} style="display: flex; gap: 0.75rem; align-items: center; padding: 1rem 0; ${borderBottom} opacity: ${rowOpacity}; transition: opacity 0.2s, background-color 0.2s; cursor: pointer; border-radius: 4px;" onclick="openEpisodeDetails(${mediaId}, ${seasonNum}, ${ep.episode_number})">
+                                        <img src="${stillUrl}" alt="Episodio ${ep.episode_number}" style="width: 100px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; filter: ${imgFilter}; transition: filter 0.2s;">
+                                        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
+                                            <span id="title-${mediaId}-${epKey}" class="${titleClass}" style="display: block; font-size: 0.95rem; font-weight: 800; ${titleStyle} line-height: 1.2; margin-bottom: 0.3rem; white-space: normal; padding-right: 0.5rem;"><span style="color: var(--text-muted); margin-right: 0.1rem;">${ep.episode_number}.</span> ${ep.name}</span>
+                                            <span style="display: block; font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center;">${calendarSvg} ${dateStr}</span>
+                                        </div>
+                                        <div style="flex-shrink: 0; padding-left: 0.5rem;" onclick="event.stopPropagation();">${actionBtnHTML}</div>
+                                    </div>
+                                `;
+                            });
+                        } else {
+                            html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio trovato.</div>`;
+                        }
+                        html += `</div></div>`;
                     }
-                    
-                    html += `</div></div>`;
                 }
             }
         }
@@ -1107,6 +1169,40 @@ async function toggleEpisode(tvId, epKey) {
     }
 }
 
+async function toggleMovieWatched(mediaId) {
+    try {
+        const userSeries = await UserLibrary.getItem(String(mediaId));
+        const tmdbData = await TmdbCache.getItem(String(mediaId));
+        
+        if (!userSeries || !tmdbData) return;
+
+        const isCurrentlyWatched = userSeries.status === 'completed';
+        const runtime = tmdbData.runtime || 120; // Fallback di sicurezza a 2 ore
+
+        if (isCurrentlyWatched) {
+            // Retrocessione a "Da vedere"
+            userSeries.status = 'planned'; 
+            userSeries.watched_count = 0;
+            userSeries.watched_minutes = 0;
+        } else {
+            // Promozione a Visto
+            userSeries.status = 'completed';
+            userSeries.watched_count = 1;
+            userSeries.watched_minutes = runtime;
+            
+            // Salviamo un finto progresso per uniformità database (utile per ordinamenti futuri)
+            if(!userSeries.progress) userSeries.progress = {};
+            userSeries.progress['MOVIE'] = Date.now(); 
+        }
+
+        await UserLibrary.setItem(String(mediaId), userSeries);
+        openDetailView(mediaId); // Ricarica la vista istantaneamente
+        
+    } catch (error) {
+        console.error("[CRITICO] Errore in toggleMovieWatched:", error);
+    }
+}
+
 async function removeSeries(tvId) {
     const confirmation = await customConfirm("Vuoi davvero eliminare questa serie e tutti i suoi progressi dalla tua libreria?");
     if (!confirmation) return;
@@ -1127,22 +1223,28 @@ async function removeSeries(tvId) {
 // GESTIONE STATO E PREFERITI
 // ==========================================
 
-async function changeSeriesStatus(tvId, newStatus) {
+async function changeSeriesStatus(mediaId, newStatus) {
     try {
-        const userSeries = await UserLibrary.getItem(String(tvId));
+        const userSeries = await UserLibrary.getItem(String(mediaId));
         if (!userSeries) return;
         
-        // Se il nuovo stato è "completed", spunta massivamente tutti gli episodi
+        const tmdbData = await TmdbCache.getItem(String(mediaId));
+        const isMovie = tmdbData && tmdbData.media_type === 'movie';
+        
         if (newStatus === 'completed') {
-            const tmdbData = await TmdbCache.getItem(String(tvId));
             if (!userSeries.progress) userSeries.progress = {};
             
-            if (tmdbData && tmdbData.detailed_seasons) {
+            if (isMovie) {
+                // Logica completamento Film
+                userSeries.progress['MOVIE'] = Date.now();
+                userSeries.watched_count = 1;
+                userSeries.watched_minutes = tmdbData.runtime || 120;
+            } else if (tmdbData && tmdbData.detailed_seasons) {
+                // Logica completamento Serie (ciclo stagioni ed episodi)
                 for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
                     if (seasonData.episodes) {
                         for (const ep of seasonData.episodes) {
                             const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                            // Se l'episodio non è già segnato, lo segna
                             if (!userSeries.progress[epKey]) {
                                 userSeries.progress[epKey] = Date.now();
                                 userSeries.watched_count = (userSeries.watched_count || 0) + 1;
@@ -1153,18 +1255,19 @@ async function changeSeriesStatus(tvId, newStatus) {
                     }
                 }
             }
+        } else if (newStatus === 'planned' && isMovie) {
+             // Reset del film se si passa a Da Vedere
+             userSeries.progress = {};
+             userSeries.watched_count = 0;
+             userSeries.watched_minutes = 0;
         }
 
         userSeries.status = newStatus;
-        await UserLibrary.setItem(String(tvId), userSeries);
-        console.log(`[SYS] Stato aggiornato per ${tvId}: ${newStatus}`);
+        await UserLibrary.setItem(String(mediaId), userSeries);
         
-        // Se siamo nel dettaglio, ricarica tutta la UI per mostrare le spunte verdi
-        if (newStatus === 'completed' && window.currentOpenTvId === String(tvId)) {
-            openDetailView(tvId);
-        } else {
-            renderHome();
-        }
+        if (window.currentOpenTvId === String(mediaId)) openDetailView(mediaId);
+        else renderHome();
+        
     } catch (error) {
         console.error("[CRITICO] Fallimento cambio stato:", error);
     }
@@ -1611,10 +1714,17 @@ function navigateBack() {
             // A. Ripristina il testo visivo per l'utente
             searchInput.value = lastSearchQuery;
             // B. Riesegue la ricerca con il campo ora compilato
-            searchSeries(); 
+            searchMedia(); 
         }
     }
 }
+
+document.querySelectorAll('input[name="search-type"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        document.querySelectorAll('input[name="search-type"]').forEach(r => r.parentElement.style.color = 'var(--text-muted)');
+        e.target.parentElement.style.color = 'var(--text)';
+    });
+});
 
 // Costante di obsolescenza: 7 giorni in millisecondi
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; 
