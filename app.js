@@ -855,8 +855,8 @@ async function openDetailView(mediaId) {
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; gap: 1rem;">
                 <h2 style="margin: 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${title}</h2>
                 <div style="display: flex; gap: 0.5rem; flex-shrink: 0;">
-                    ${!isPreview ? `<button class="btn btn-outline btn-small" onclick="forceUpdateMetadata(${mediaId})" title="Forza il download dei nuovi dati da TMDB">↻ Aggiorna</button>` : ''}
-                    ${!isPreview ? `<button class="btn btn-danger btn-small" onclick="removeSeries(${mediaId})">Elimina</button>` : ''}
+                    ${!isPreview ? `<button class="btn btn-outline btn-small" onclick="forceUpdateMetadata(${mediaId})" title="Forza il download dei nuovi dati da TMDB">↻</button>` : ''}
+                    ${!isPreview ? `<button class="btn btn-danger btn-small" onclick="removeSeries(${mediaId})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
                 </div>
             </div>
             ${trailerHTML}
