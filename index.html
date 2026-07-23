@@ -47,20 +47,23 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
         body { background-color: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden; width: 100%; position: relative; }
         
-        /* NAVIGAZIONE */
-        nav { background: var(--card-bg); padding: 0.75rem 0.5rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
-        .nav-container { max-width: 800px; margin: 0 auto; display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
-        .nav-links { display: flex; gap: 0.1rem; flex-wrap: nowrap; justify-content: center; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
-        .nav-links::-webkit-scrollbar { display: none; }
-        nav button { background: none; border: none; font-size: 0.85rem; font-weight: 700; color: var(--text-muted); cursor: pointer; padding: 0.5rem; border-radius: 6px; white-space: nowrap; transition: background-color 0.2s, color 0.2s; }
-        nav button:hover { color: var(--text); background: var(--input-bg); }
-        nav button.active { background: var(--primary); color: var(--primary-text); }
-        .nav-utils { flex-shrink: 0; display: flex; align-items: center; }
-        .nav-utils button { padding: 0.4rem; border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--text); }
+        /* NAVIGAZIONE SUPERIORE (Ridotta all'osso) */
+        .top-nav { background: var(--card-bg); padding: 0.75rem 1rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .nav-container { max-width: 800px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .nav-utils { display: flex; align-items: center; }
+        .nav-utils button { padding: 0.4rem; border-radius: 50%; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--text); border: none; cursor: pointer; transition: background-color 0.2s; }
         .nav-utils button:hover { background: var(--input-bg); }
 
+        /* NAVIGAZIONE INFERIORE (Il nuovo standard ergonomico) */
+        .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--card-bg); border-top: 1px solid var(--border); z-index: 100; display: flex; justify-content: space-around; padding: 0.6rem 0 calc(0.6rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.1); }
+        .bottom-nav button { background: none; border: none; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; color: var(--text-muted); cursor: pointer; font-size: 0.6rem; font-weight: 800; text-transform: uppercase; width: 25%; transition: color 0.2s; }
+        .bottom-nav button svg { width: 24px; height: 24px; stroke-width: 2; transition: transform 0.2s, stroke-width 0.2s; }
+        .bottom-nav button.active { color: var(--text); }
+        .bottom-nav button.active svg { transform: translateY(-3px); stroke-width: 2.5; }
+
         /* LAYOUT GLOBALE */
-        main { max-width: 800px; margin: 2rem auto; padding: 0 1rem; min-height: 80vh; }
+        /* Nota il padding-bottom: 5rem per non far mangiare i contenuti dalla bottom-nav */
+        main { max-width: 800px; margin: 2rem auto; padding: 0 1rem 5rem 1rem; min-height: 80vh; }
         .view { display: none; animation: fadeIn 0.2s ease-in-out; }
         .view.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
@@ -147,23 +150,13 @@
 <body>
 
     <!-- NAVBAR -->
-    <nav>
-        <div class="nav-container" style="justify-content: space-between;">
-            
-            <!-- TITOLO / LOGO CORRETTO -->
-            <div style="font-size: 1.25rem; flex-shrink: 0; letter-spacing: -1.5px; color: var(--text); display: flex; align-items: center; text-transform: uppercase;">
+    <!-- NAVBAR SUPERIORE (Testata) -->
+    <nav class="top-nav">
+        <div class="nav-container">
+            <div style="font-size: 1.25rem; letter-spacing: -1.5px; color: var(--text); display: flex; align-items: center; text-transform: uppercase;">
                 <strong style="font-weight: 900;">This</strong><span style="font-weight: 400; opacity: 0.7;">Play</span>
             </div>
             
-            <!-- LINK CENTRALI -->
-            <div class="nav-links">
-                <button onclick="switchTab('home')" id="nav-home" class="active">Home</button>
-                <button onclick="switchTab('library')" id="nav-library">Libreria</button>
-                <button onclick="switchTab('search')" id="nav-search">Ricerca</button>
-                <button onclick="switchTab('stats')" id="nav-stats">Stats</button>
-            </div>
-            
-            <!-- UTILS DESTRA -->
             <div class="nav-utils">
                 <button onclick="openSettings()" title="Impostazioni">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -177,8 +170,7 @@
 
     <main>
         <!-- VISTA: HOME -->
-        <section id="view-home" class="view active card">
-            <h2 style="font-size: 1.8rem; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase;">HOME</h2>
+        <section id="view-home" class="view active card" style="padding-top: 1rem;">
             <div id="home-content"></div>
         </section>
 
@@ -351,5 +343,24 @@
         <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
     </div>
 
+    <!-- NAVBAR INFERIORE (Navigazione Principale) -->
+    <nav class="bottom-nav">
+        <button onclick="switchTab('home')" id="nav-home" class="active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            <span>Home</span>
+        </button>
+        <button onclick="switchTab('library')" id="nav-library">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+            <span>Libreria</span>
+        </button>
+        <button onclick="switchTab('search')" id="nav-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Ricerca</span>
+        </button>
+        <button onclick="switchTab('stats')" id="nav-stats">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+            <span>Stats</span>
+        </button>
+    </nav>
 </body>
 </html>

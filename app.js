@@ -289,17 +289,21 @@ async function renderHome() {
             return;
         }
 
-        // 1. STRATEGIA: Invece di incollare testo, salviamo gli oggetti per poterli ordinare
         let inProgressItems = [];
         let upcomingItems = [];
 
-        const today = new Date().toISOString().split('T')[0];
+        const todayObj = new Date();
+        const today = todayObj.toISOString().split('T')[0];
+        
+        const limitObj = new Date();
+        limitObj.setDate(todayObj.getDate() + 30); // Finestra visiva stretta a 30 giorni
+        const maxDate = limitObj.toISOString().split('T')[0];
 
         for (const key of keys) {
             const userSeries = await UserLibrary.getItem(key);
             
             if (!userSeries.progress || Object.keys(userSeries.progress).length === 0) continue;
-            if (userSeries.status === 'completed' || userSeries.status === 'paused') continue;
+            if (userSeries.status === 'paused') continue;
 
             const tmdbData = await TmdbCache.getItem(key);
             if (!tmdbData || !tmdbData.detailed_seasons) continue;
@@ -332,13 +336,19 @@ async function renderHome() {
                     if (nextEpData) {
                         epRuntime = nextEpData.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                         if (nextEpData.air_date && nextEpData.air_date > today) {
-                            isUpcoming = true;
-                            targetEpisode = { 
-                                key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
-                                name: nextEpData.name,
-                                air_date: nextEpData.air_date 
-                            };
-                        } else if (!nextEpData.air_date || nextEpData.air_date <= today) {
+                            
+                            // NUOVO: Filtro a 30 giorni
+                            if (nextEpData.air_date <= maxDate) {
+                                isUpcoming = true;
+                                targetEpisode = { 
+                                    key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
+                                    name: nextEpData.name,
+                                    air_date: nextEpData.air_date 
+                                };
+                            }
+                            
+                        } else if (nextEpData.air_date && nextEpData.air_date <= today) {
+                            // Se non ha una data (TBA) o esce oltre i 30 giorni, viene ignorato.
                             targetEpisode = { 
                                 key: `S${String(maxS).padStart(2, '0')}E${String(nextEpData.episode_number).padStart(2, '0')}`, 
                                 name: nextEpData.name 
@@ -359,13 +369,18 @@ async function renderHome() {
                                 if (firstValidEp) {
                                     epRuntime = firstValidEp.runtime || (tmdbData.episode_run_time && tmdbData.episode_run_time[0]) || 45;
                                     if (firstValidEp.air_date && firstValidEp.air_date > today) {
-                                        isUpcoming = true;
-                                        targetEpisode = { 
-                                            key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
-                                            name: firstValidEp.name,
-                                            air_date: firstValidEp.air_date 
-                                        };
-                                    } else if (!firstValidEp.air_date || firstValidEp.air_date <= today) {
+                                        
+                                        // NUOVO: Filtro a 30 giorni
+                                        if (firstValidEp.air_date <= maxDate) {
+                                            isUpcoming = true;
+                                            targetEpisode = { 
+                                                key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
+                                                name: firstValidEp.name,
+                                                air_date: firstValidEp.air_date 
+                                            };
+                                        }
+                                        
+                                    } else if (firstValidEp.air_date && firstValidEp.air_date <= today) {
                                         targetEpisode = { 
                                             key: `S${String(nextS).padStart(2, '0')}E${String(firstValidEp.episode_number).padStart(2, '0')}`, 
                                             name: firstValidEp.name 
@@ -384,35 +399,15 @@ async function renderHome() {
 
                 if (isUpcoming) {
                     const dateFormatted = targetEpisode.air_date.split('-').reverse().join('/');
-                    const calendarSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 3px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>`;
-
                     upcomingItems.push({
                         dateTimestamp: new Date(targetEpisode.air_date).getTime(),
                         html: `
-                        <div style="display: flex; border: 1.5px solid var(--border); background: var(--input-bg); margin-bottom: 0.75rem; overflow: hidden; height: 95px; opacity: 0.85;">
-                            <img src="${posterUrl}" style="width: 65px; object-fit: cover; border-right: 1.5px solid var(--border);" alt="${tmdbData.name}">
-                            <div style="flex: 1; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                                <div>
-                                    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
-                                        <strong style="font-size: 0.9rem; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1;">
-                                            ${tmdbData.name}
-                                        </strong>
-                                        <span style="font-size: 0.7rem; font-weight: 900; color: var(--text-muted); flex-shrink: 0; background: var(--card-bg); padding: 0.1rem 0.3rem; border: 1px solid var(--border); border-radius: 3px;">
-                                            ${targetEpisode.key}
-                                        </span>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.15rem;">
-                                        ${targetEpisode.name}
-                                    </div>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
-                                    <span style="font-size: 0.75rem; font-weight: 800; color: var(--text); display: flex; align-items: center;">
-                                        ${calendarSvg} Uscita: ${dateFormatted}
-                                    </span>
-                                    <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="openDetailView('${key}'); switchTab('detail');">
-                                        Dettagli
-                                    </button>
-                                </div>
+                        <div style="flex-shrink: 0; width: 130px; background: var(--card-bg); border: 1.5px solid var(--border); border-radius: var(--radius); overflow: hidden; position: relative; cursor: pointer;" onclick="openDetailView('${key}'); switchTab('detail');">
+                            <img src="${posterUrl}" style="width: 100%; height: 80px; object-fit: cover; opacity: 0.7; border-bottom: 1.5px solid var(--border);" alt="${tmdbData.name}">
+                            <div style="padding: 0.5rem;">
+                                <div style="font-size: 0.6rem; font-weight: 900; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.25rem; letter-spacing: 0.5px;">${dateFormatted}</div>
+                                <strong style="font-size: 0.8rem; line-height: 1.1; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text);">${tmdbData.name}</strong>
+                                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.15rem; font-weight: 700; background: var(--input-bg); display: inline-block; padding: 0.1rem 0.3rem; border-radius: 3px;">${targetEpisode.key}</div>
                             </div>
                         </div>
                     `});
@@ -463,24 +458,35 @@ async function renderHome() {
 
         let finalHtml = '';
 
-        if (activeCount > 0) {
+        // 1. IL WIDGET CALENDARIO (Orizzontale e non bloccante)
+        if (upcomingCount > 0) {
             finalHtml += `
-                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem; letter-spacing: 0.5px;">Da continuare</p>
-                ${inProgressHTML}
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        <h3 style="margin: 0; font-size: 0.75rem; font-weight: 900; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">Calendario Uscite</h3>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none;">
+                        ${upcomingHTML}
+                    </div>
+                </div>
             `;
         }
 
-        if (upcomingCount > 0) {
+        // 2. LA LISTA OPERATIVA
+        if (activeCount > 0) {
             finalHtml += `
-                <p style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-top: ${activeCount > 0 ? '2rem' : '0'}; margin-bottom: 1rem; letter-spacing: 0.5px;">Prossime Uscite (In Pari)</p>
-                ${upcomingHTML}
+                <h3 style="font-size: 0.85rem; font-weight: 900; text-transform: uppercase; color: var(--text); margin-bottom: 0.75rem; letter-spacing: 0.5px; border-bottom: 2px solid var(--text); padding-bottom: 0.3rem;">Da continuare</h3>
+                ${inProgressHTML}
             `;
         }
 
         if (activeCount === 0 && upcomingCount === 0) {
             container.innerHTML = `
-                <p style="color: var(--text-muted); margin-bottom: 1rem;">Nessuna serie attiva al momento. Le serie in corso appariranno qui.</p>
-                <button class="btn" onclick="switchTab('library')">Sfoglia Libreria</button>
+                <div style="text-align: center; padding: 2rem 0;">
+                    <p style="color: var(--text-muted); margin-bottom: 1rem; font-weight: 600;">La tua dashboard è vuota.</p>
+                    <button class="btn" onclick="switchTab('library')">Sfoglia Libreria</button>
+                </div>
             `;
         } else {
             container.innerHTML = finalHtml;
@@ -712,62 +718,182 @@ async function renderLibrary() {
 async function renderStats() {
     currentContext = 'stats';
     const container = document.getElementById('stats-content');
-    container.innerHTML = '<span style="color: var(--text-muted);">Calcolo metriche in corso...</span>';
+    container.innerHTML = '<div style="text-align: center; padding: 2rem;"><div style="width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div><span style="color: var(--text-muted); font-weight: 800; text-transform: uppercase;">Calcolo proiezioni analitiche...</span></div>';
     
     try {
         const keys = await UserLibrary.keys();
-        let totalSeries = keys.length;
-        let totalEpisodes = 0;
-        let totalMinutes = 0;
+        
+        // Strutture Dati Separate
+        let tv = { tracked: 0, watching: 0, completed: 0, planned: 0, paused: 0, epsWatched: 0, minutes: 0 };
+        let movie = { tracked: 0, planned: 0, completed: 0, minutes: 0 };
         
         for (const key of keys) {
-            const userSeries = await UserLibrary.getItem(key);
+            const userItem = await UserLibrary.getItem(key);
+            const tmdbData = await TmdbCache.getItem(key);
             
-            const epCount = userSeries.watched_count || 0;
-            totalEpisodes += epCount;
+            // Deduciamo il tipo con fallback al salvataggio locale
+            const type = (tmdbData && tmdbData.media_type) ? tmdbData.media_type : (userItem.media_type || 'tv');
             
-            if (userSeries.watched_minutes !== undefined) {
-                totalMinutes += userSeries.watched_minutes;
-            } else {
-                const tmdbData = await TmdbCache.getItem(key);
-                let runtime = 45; 
-                if(tmdbData && tmdbData.episode_run_time && tmdbData.episode_run_time.length > 0) {
-                    runtime = tmdbData.episode_run_time[0];
+            if (type === 'tv') {
+                tv.tracked++;
+                const status = userItem.status || 'watching';
+                if (status === 'watching') tv.watching++;
+                else if (status === 'completed') tv.completed++;
+                else if (status === 'planned') tv.planned++;
+                else if (status === 'paused') tv.paused++;
+                
+                const eps = userItem.watched_count || 0;
+                tv.epsWatched += eps;
+                
+                if (userItem.watched_minutes !== undefined) {
+                    tv.minutes += userItem.watched_minutes;
+                } else {
+                    let runtime = 45; 
+                    if(tmdbData && tmdbData.episode_run_time && tmdbData.episode_run_time.length > 0) runtime = tmdbData.episode_run_time[0];
+                    tv.minutes += (eps * runtime);
                 }
-                totalMinutes += (epCount * runtime);
+            } else {
+                movie.tracked++;
+                const status = userItem.status || 'planned';
+                if (status === 'completed') movie.completed++;
+                else movie.planned++; // Fallback implicito per i film
+                
+                let runtime = (tmdbData && tmdbData.runtime) ? tmdbData.runtime : 120;
+                if (status === 'completed') {
+                    movie.minutes += runtime;
+                }
             }
         }
         
-        const hours = Math.floor(totalMinutes / 60);
-        const remainingMinutes = totalMinutes % 60;
-        const days = (totalMinutes / 1440).toFixed(1);
+        // Helper per la conversione del tempo
+        const formatTime = (totalMins) => {
+            return {
+                h: Math.floor(totalMins / 60),
+                m: totalMins % 60,
+                d: (totalMins / 1440).toFixed(1)
+            };
+        };
+
+        const tvTime = formatTime(tv.minutes);
+        const movieTime = formatTime(movie.minutes);
+        const totalTime = formatTime(tv.minutes + movie.minutes);
+
+        // Helper per le percentuali (per i grafici CSS)
+        const getPct = (val, total) => total > 0 ? Math.round((val / total) * 100) : 0;
         
+        // Calcolo metriche per barra Serie
+        const tvActivePct = getPct(tv.watching, tv.tracked);
+        const tvDonePct = getPct(tv.completed, tv.tracked);
+        const tvPausedPct = getPct(tv.paused, tv.tracked);
+        const tvPlannedPct = getPct(tv.planned, tv.tracked);
+
+        // Calcolo metriche per barra Film
+        const movieDonePct = getPct(movie.completed, movie.tracked);
+        const moviePlannedPct = getPct(movie.planned, movie.tracked);
+
+        // Fabbrica del DOM Brutalista
         container.innerHTML = `
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
-                <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--input-bg);">
-                    <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Serie Tracciate</div>
-                    <div style="font-size: 2rem; font-weight: 900; line-height: 1.1; margin-top: 0.2rem;">${totalSeries}</div>
+            <!-- SEZIONE TOTALE -->
+            <div style="border: 2px solid var(--text); padding: 1.5rem; background: var(--card-bg); margin-bottom: 2rem; position: relative; overflow: hidden;">
+                <div style="position: absolute; top: -10px; right: -10px; font-size: 6rem; opacity: 0.03; font-weight: 900; pointer-events: none; line-height: 1;">&Sigma;</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 900; letter-spacing: 1px; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem;">Quadro Complessivo</div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                    <div>
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Opere Tracciate</div>
+                        <div style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${tv.tracked + movie.tracked}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tempo Totale</div>
+                        <div style="display: flex; align-items: baseline; gap: 0.1rem;">
+                            <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.h}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700;">h</span>
+                            <span style="font-size: 2.2rem; font-weight: 900; line-height: 1; margin-left: 0.2rem;">${totalTime.m}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700;">m</span>
+                        </div>
+                    </div>
                 </div>
-                <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--input-bg);">
-                    <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Episodi Visti</div>
-                    <div style="font-size: 2rem; font-weight: 900; line-height: 1.1; margin-top: 0.2rem;">${totalEpisodes}</div>
+                <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); background: var(--input-bg); padding: 0.75rem; border-left: 4px solid var(--text);">
+                    Equivale a <strong style="color: var(--text);">${totalTime.d} giorni</strong> interi passati davanti a uno schermo.
                 </div>
             </div>
-            
-            <div style="border: 1.5px solid var(--text); padding: 1.25rem; background: var(--card-bg);">
-                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tempo Vitale Consumato</div>
-                <div style="display: flex; align-items: baseline; gap: 0.2rem; margin-top: 0.5rem;">
-                    <span style="font-size: 2.5rem; font-weight: 900; line-height: 1; color: var(--text);">${hours}</span>
-                    <span style="color: var(--text-muted); font-weight: 700; font-size: 1.2rem; margin-right: 0.5rem;">h</span>
-                    <span style="font-size: 2.5rem; font-weight: 900; line-height: 1; color: var(--text);">${remainingMinutes}</span>
-                    <span style="color: var(--text-muted); font-weight: 700; font-size: 1.2rem;">m</span>
+
+            <!-- SEZIONE SERIE TV -->
+            <div style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.1rem; text-transform: uppercase; color: var(--text); border-bottom: 2px solid var(--text); padding-bottom: 0.5rem; margin-bottom: 1rem;">Serie TV</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Totali</div>
+                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${tv.tracked}</div>
+                    </div>
+                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Episodi Visti</div>
+                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${tv.epsWatched}</div>
+                    </div>
                 </div>
-                <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; font-weight: 600;">Equivalgono a circa <strong style="color: var(--text);">${days} giorni</strong> ininterrotti.</p>
+
+                <!-- GRAFICO A BARRA CSS: SERIE -->
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.3rem;">
+                        <span>In Corso (${tvActivePct}%)</span>
+                        <span>Completate (${tvDonePct}%)</span>
+                    </div>
+                    <div style="width: 100%; height: 12px; background: var(--input-bg); border-radius: 6px; display: flex; overflow: hidden; border: 1px solid var(--border);">
+                        <div style="width: ${tvActivePct}%; background: var(--primary);" title="In Corso: ${tv.watching}"></div>
+                        <div style="width: ${tvDonePct}%; background: var(--success);" title="Completate: ${tv.completed}"></div>
+                        <div style="width: ${tvPausedPct}%; background: var(--text-muted);" title="In Pausa: ${tv.paused}"></div>
+                        <div style="width: ${tvPlannedPct}%; background: transparent;" title="Da Vedere: ${tv.planned}"></div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 0.75rem; text-align: center;">
+                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--primary);">${tv.watching}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">In Corso</div></div>
+                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--success);">${tv.completed}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Pari/Fine</div></div>
+                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--text);">${tv.planned}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Da Vedere</div></div>
+                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--text-muted);">${tv.paused}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">In Pausa</div></div>
+                    </div>
+                </div>
+
+                <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 0.5rem;">
+                    <span>Tempo Totale Serie:</span>
+                    <strong style="color: var(--text);">${tvTime.h}h ${tvTime.m}m</strong>
+                </div>
+            </div>
+
+            <!-- SEZIONE FILM -->
+            <div>
+                <h3 style="font-size: 1.1rem; text-transform: uppercase; color: var(--danger); border-bottom: 2px solid var(--danger); padding-bottom: 0.5rem; margin-bottom: 1rem;">Film</h3>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tracciati</div>
+                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${movie.tracked}</div>
+                    </div>
+                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Visti</div>
+                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1; color: var(--danger);">${movie.completed}</div>
+                    </div>
+                </div>
+
+                <!-- GRAFICO A BARRA CSS: FILM -->
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.3rem;">
+                        <span>Visti (${movieDonePct}%)</span>
+                        <span>Da Vedere (${moviePlannedPct}%)</span>
+                    </div>
+                    <div style="width: 100%; height: 12px; background: var(--input-bg); border-radius: 6px; display: flex; overflow: hidden; border: 1px solid var(--border);">
+                        <div style="width: ${movieDonePct}%; background: var(--danger);" title="Visti: ${movie.completed}"></div>
+                        <div style="width: ${moviePlannedPct}%; background: transparent;" title="Da Vedere: ${movie.planned}"></div>
+                    </div>
+                </div>
+
+                <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 0.5rem;">
+                    <span>Tempo Totale Film:</span>
+                    <strong style="color: var(--text);">${movieTime.h}h ${movieTime.m}m</strong>
+                </div>
             </div>
         `;
     } catch (e) {
         console.error("[CRITICO] Fallimento rendering Stats:", e);
-        container.innerHTML = '<span style="color: var(--danger);">Impossibile calcolare le statistiche.</span>';
+        container.innerHTML = '<div style="padding: 2rem; border: 2px solid var(--danger); background: var(--card-bg); color: var(--danger); font-weight: 800; text-align: center; text-transform: uppercase;">Impossibile elaborare i dati.<br>Database corrotto o irraggiungibile.</div>';
     }
 }
 
@@ -903,7 +1029,7 @@ async function openDetailView(mediaId) {
             if (isMovie) {
                 const isWatched = userSeries.status === 'completed';
                 const actionClass = isWatched ? 'btn-outline' : 'btn-success';
-                const actionText = isWatched ? 'RIMUOVI SPUNTA' : 'SEGNA COME VISTO';
+                const actionText = isWatched ? 'RIMUOVI' : 'SEGNA COME VISTO';
                 const actionIcon = isWatched 
                     ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>`
                     : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -1634,14 +1760,15 @@ function switchTab(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(`view-${viewId}`).classList.add('active');
     
-    document.querySelectorAll('.nav-links button').forEach(b => b.classList.remove('active'));
+    // Aggiornato: Punta alla nuova barra inferiore
+    document.querySelectorAll('.bottom-nav button').forEach(b => b.classList.remove('active'));
     const targetNav = document.getElementById(`nav-${viewId}`);
     if (targetNav) targetNav.classList.add('active');
 
     if (viewId === 'library') renderLibrary();
     if (viewId === 'home') renderHome();
     if (viewId === 'stats') renderStats();
-    if (viewId === 'search') loadDiscovery();
+    if (viewId === 'search') loadDiscovery(); 
     
     window.scrollTo(0, 0);
 }
@@ -1941,9 +2068,9 @@ async function openActorView(personId) {
                 </div>
             </div>
             
-            <div style="background: var(--input-bg); padding: 1rem; border: 1px solid var(--border); border-left: 4px solid var(--text); margin-bottom: 2rem;">
-                <h3 style="font-size: 0.8rem; margin: 0 0 0.5rem 0; color: var(--text-muted); text-transform: uppercase;">Biografia</h3>
-                <p style="font-size: 0.85rem; line-height: 1.6; margin: 0; color: var(--text); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;" title="Leggi su TMDB per la versione completa">${bio}</p>
+            <div onclick="const p = this.querySelector('p'); const isClamped = p.style.display === '-webkit-box'; p.style.display = isClamped ? 'block' : '-webkit-box'; this.querySelector('.bio-hint').innerText = isClamped ? '(Clicca per ridurre)' : '(Clicca per espandere)';" style="background: var(--input-bg); padding: 1rem; border: 1px solid var(--border); border-left: 4px solid var(--text); margin-bottom: 2rem; cursor: pointer; user-select: none;">
+                <h3 style="font-size: 0.8rem; margin: 0 0 0.5rem 0; color: var(--text-muted); text-transform: uppercase;">Biografia <span class="bio-hint" style="font-size: 0.6rem; font-weight: 600; opacity: 0.6;">(Clicca per espandere)</span></h3>
+                <p style="font-size: 0.85rem; line-height: 1.6; margin: 0; color: var(--text); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;">${bio}</p>
             </div>
 
             <h3 style="font-size: 1.1rem; text-transform: uppercase; border-bottom: 2px solid var(--text); padding-bottom: 0.5rem; margin-bottom: 1rem;">Opere Più Note</h3>
