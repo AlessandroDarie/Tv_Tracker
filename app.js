@@ -1748,6 +1748,12 @@ async function handleTVTimeZip(event) {
 const currentTheme = localStorage.getItem('tvTheme') || 'dark';
 document.documentElement.setAttribute('data-theme', currentTheme);
 
+// Sincronizza immediatamente il colore della barra di stato del telefono all'avvio
+const metaThemeColor = document.getElementById('theme-color-meta');
+if (metaThemeColor) {
+    metaThemeColor.setAttribute('content', currentTheme === 'dark' ? '#18181b' : '#ffffff');
+}
+
 function toggleTheme() {
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const newTheme = isDark ? 'light' : 'dark';
@@ -1787,6 +1793,13 @@ function closeSettings(event, force = false) {
 function updateSettingsUI() {
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const btn = document.getElementById('btn-toggle-theme');
+    
+    // Cambia dinamicamente la barra di stato nativa di iOS/Android
+    const metaThemeColor = document.getElementById('theme-color-meta');
+    if (metaThemeColor) {
+        metaThemeColor.setAttribute('content', isDark ? '#18181b' : '#ffffff');
+    }
+
     if (btn) {
         btn.innerText = isDark ? 'ON' : 'OFF';
         btn.style.borderColor = isDark ? 'var(--text)' : 'var(--border)';
