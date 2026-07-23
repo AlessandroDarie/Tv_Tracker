@@ -144,7 +144,7 @@
         .modal-card { background: var(--card-bg); padding: 2rem; border-radius: var(--radius); width: 90%; max-width: 400px; border: 1px solid var(--border); }
         
         /* FOOTER */
-        footer { text-align: center; padding: 2rem 1rem; border-top: 1px solid var(--border); margin-top: 3rem; color: var(--text-muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+        footer { text-align: center; padding: 2rem 1rem calc(6rem + env(safe-area-inset-bottom)) 1rem; border-top: 1px solid var(--border); margin-top: 3rem; color: var(--text-muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
     </style>
 </head>
 <body>
@@ -332,6 +332,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="api-config.js"></script>
     <script src="migrator.js"></script>
     <script src="app.js"></script>

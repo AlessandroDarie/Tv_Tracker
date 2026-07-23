@@ -1709,32 +1709,41 @@ async function handleTVTimeZip(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Sfruttiamo la tua architettura: prendiamo il loader globale esistente
     const loader = document.getElementById('global-loader');
     const loaderText = loader.querySelector('strong');
     const originalLoaderText = loaderText.innerText;
 
-    // Blocca l'interfaccia e avvisa l'utente della potenziale lunga attesa
     loaderText.innerText = "MIGRAZIONE IN CORSO...\nATTENDI, PUÒ RICHIEDERE MINUTI.";
     loader.classList.add('active');
 
     try {
-        // Istanziazione on-demand: le librerie vengono chiamate solo ora
         const migrator = new TVTimeMigrator();
-        await migrator.processZip(file);
+        const report = await migrator.processZip(file); // Intercetta il report generato
         
-        // Uso del tuo alert di sistema brutalista
-        await customAlert("Migrazione terminata con successo. Verifica la console di sviluppo (F12) per l'elenco delle serie che TMDB non ha riconosciuto.");
+        // 1. Spegne il loader PRIMA di mostrare l'alert per evitare sovrapposizioni z-index
+        loader.classList.remove('active');
         
-        // Ricarica la vista attuale per mostrare i nuovi dati
+        // 2. Costruisce il resoconto completo
+        let message = `Migrazione completata!\n\n✅ Trasferiti: ${report.successCount}\n❌ Non trovati: ${report.failCount}`;
+        
+        if (report.failCount > 0) {
+            const limit = 10;
+            const preview = report.failedShows.slice(0, limit).map(s => `- ${s}`).join('\n');
+            const extra = report.failCount > limit ? `\n...e altri ${report.failCount - limit}` : '';
+            message += `\n\nTitoli da aggiungere manualmente:\n${preview}${extra}`;
+        }
+        
+        // 3. Mostra l'esito finale all'utente
+        await customAlert(message);
+        
         if (currentContext === 'library') renderLibrary();
         else switchTab('home');
         
     } catch (error) {
         console.error("[CRITICO] Fallimento nell'importazione TV Time:", error);
+        loader.classList.remove('active'); // Sicurezza z-index
         await customAlert("Errore fatale durante la migrazione: " + error.message);
     } finally {
-        // Ripristino rigoroso dello stato iniziale per prevenire blocchi fantasma
         event.target.value = ''; 
         loaderText.innerText = originalLoaderText;
         loader.classList.remove('active');

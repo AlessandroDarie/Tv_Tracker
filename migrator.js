@@ -1,182 +1,209 @@
 class TVTimeMigrator {
     constructor() {
-        this.dependenciesLoaded = false;
-        this.tmdbApiKey = TMDB_CONFIG.API_KEY; 
-        this.delayMs = 250; // Massimo 4 richieste al secondo per non farsi bannare
-    }
-
-    async loadDependencies() {
-        if (this.dependenciesLoaded) return;
-        
-        console.log("[MIGRAZIONE] Iniezione librerie esterne...");
-        await Promise.all([
-            this.injectScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'),
-            this.injectScript('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js')
-        ]);
-        
-        this.dependenciesLoaded = true;
-        console.log("[MIGRAZIONE] Motore asincrono pronto.");
-    }
-
-    injectScript(src) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = src;
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.appendChild(script);
-        });
+        this.tmdbApi = TMDB_CONFIG.BASE_URL;
+        this.apiKey = TMDB_CONFIG.API_KEY;
     }
 
     async processZip(file) {
-        await this.loadDependencies();
-        
-        const zip = new JSZip();
-        const extracted = await zip.loadAsync(file);
-        
-        const showsFile = extracted.file("followed_tv_show.csv");
-        const episodesFile = extracted.file("watched_on_episode.csv");
-
-        if (!showsFile || !episodesFile) {
-            throw new Error("Archivio non valido: mancano followed_tv_show.csv o watched_on_episode.csv");
+        if (!window.JSZip) {
+            throw new Error("Libreria JSZip mancante. Controlla index.html.");
         }
 
-        console.log("[MIGRAZIONE] Estrazione file in memoria...");
-        const showsCsv = await showsFile.async("string");
-        const episodesCsv = await episodesFile.async("string");
-
-        console.log("[MIGRAZIONE] Parsing CSV...");
-        const parsedShows = Papa.parse(showsCsv, { header: true, skipEmptyLines: true });
-        const parsedEpisodes = Papa.parse(episodesCsv, { header: true, skipEmptyLines: true });
-
-        // FASE 1: Creazione Dizionario (Show Name -> TVDB ID)
-        const showNameToTvdbId = new Map();
-        parsedShows.data.forEach(row => {
-            if (row.tv_show_name && row.tv_show_id) {
-                showNameToTvdbId.set(row.tv_show_name.trim(), row.tv_show_id.trim());
-            }
-        });
-
-        // FASE 2: Raggruppamento storico episodi per Serie
-        const showToWatchedEpisodes = new Map();
-        parsedEpisodes.data.forEach(row => {
-            const name = row.tv_show_name ? row.tv_show_name.trim() : null;
-            const s = parseInt(row.episode_season_number, 10);
-            const e = parseInt(row.episode_number, 10);
-
-            if (name && !isNaN(s) && !isNaN(e)) {
-                if (!showToWatchedEpisodes.has(name)) {
-                    showToWatchedEpisodes.set(name, new Set());
-                }
-                const epKey = `S${String(s).padStart(2, '0')}E${String(e).padStart(2, '0')}`;
-                showToWatchedEpisodes.get(name).add(epKey);
-            }
-        });
-
-        console.log(`[MIGRAZIONE] Trovate ${showToWatchedEpisodes.size} serie con storico visualizzazioni. Avvio motore di traduzione...`);
+        console.log("[MIGRATOR] Apertura file ZIP in corso...");
+        const zip = new JSZip();
         
-        await this.translateAndImport(showNameToTvdbId, showToWatchedEpisodes);
+        try {
+            const contents = await zip.loadAsync(file);
+            
+            // Cerca il file dei progressi (supporta varie versioni storiche dell'export)
+            const trackingFile = contents.file("tracking-prod-records-v2.csv") || contents.file("tracking-prod-records.csv");
+            
+            if (!trackingFile) {
+                throw new Error("Il file ZIP non contiene il file tracking-prod-records.csv.");
+            }
+
+            console.log("[MIGRATOR] CSV trovato. Estrazione...");
+            const csvText = await trackingFile.async("string");
+            
+            // FONDAMENTALE: Restituisce l'esito della migrazione verso l'esterno
+            return await this.parseAndMigrate(csvText);
+
+        } catch (e) {
+            console.error(e);
+            throw new Error("Impossibile leggere l'archivio ZIP. Assicurati che non sia corrotto.");
+        }
     }
 
-    // FASE 3: Traduzione e Iniezione nel Database Locale
-    async translateAndImport(showNameToTvdbId, showToWatchedEpisodes) {
+    async parseAndMigrate(csvText) {
+        const rows = csvText.split('\n').filter(row => row.trim() !== '');
+        if (rows.length < 2) throw new Error("Il CSV dei progressi è vuoto o illeggibile.");
+
+        // 1. PULIZIA E RILEVAMENTO AUTOMATICO
+        const headerRow = rows[0].replace(/^\uFEFF/, '').toLowerCase();
+        const separator = (headerRow.split(';').length > headerRow.split(',').length) ? ';' : ',';
+
+        // 2. PARSER BLINDATO
+        const parseRow = (rowStr) => {
+            const result = [];
+            let cell = '';
+            let inQuotes = false;
+            for (let i = 0; i < rowStr.length; i++) {
+                const c = rowStr[i];
+                if (c === '"') {
+                    inQuotes = !inQuotes;
+                } else if (c === separator && !inQuotes) {
+                    result.push(cell.trim());
+                    cell = '';
+                } else {
+                    cell += c;
+                }
+            }
+            result.push(cell.trim());
+            return result.map(v => v.replace(/^"|"$/g, ''));
+        };
+
+        const headers = parseRow(headerRow);
+        console.log("[MIGRATOR] Intestazioni rilevate:", headers);
+
+        // 3. RICERCA PRIORITARIA DELLE COLONNE
+        const getColumnIndex = (exactMatches, fallbackKeyword) => {
+            for (let match of exactMatches) {
+                const idx = headers.indexOf(match);
+                if (idx !== -1) return idx;
+            }
+            return headers.findIndex(h => h.includes(fallbackKeyword));
+        };
+
+        const showNameIdx = getColumnIndex(['series_name', 'tv_show_name', 'show_name'], 'titolo');
+        const seasonIdx = getColumnIndex(['season_number', 'season'], 'stagione');
+        const episodeIdx = getColumnIndex(['episode_number', 'episode'], 'episodio');
+
+        if (showNameIdx === -1 || seasonIdx === -1 || episodeIdx === -1) {
+            console.error(`[MIGRATOR] Debug Indici Falliti -> Show: ${showNameIdx}, Season: ${seasonIdx}, Ep: ${episodeIdx}`);
+            throw new Error("Impossibile mappare le colonne del CSV. Il formato interno di TV Time è drasticamente alterato.");
+        }
+
+        console.log(`[MIGRATOR] Inizio elaborazione logica di ${rows.length - 1} spunte...`);
+        const seriesData = {};
+
+        // 4. ASSEMBLAGGIO DEI DATI
+        for (let i = 1; i < rows.length; i++) {
+            const columns = parseRow(rows[i]);
+            
+            if (columns.length <= Math.max(showNameIdx, seasonIdx, episodeIdx)) continue;
+
+            const showName = columns[showNameIdx];
+            const season = parseInt(columns[seasonIdx], 10);
+            const episode = parseInt(columns[episodeIdx], 10);
+
+            if (!showName || isNaN(season) || isNaN(episode) || season === 0) continue;
+
+            if (!seriesData[showName]) {
+                seriesData[showName] = { episodes: [] };
+            }
+            seriesData[showName].episodes.push(`S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`);
+        }
+
+        const showNames = Object.keys(seriesData);
+        console.log(`[MIGRATOR] Identificate ${showNames.length} serie TV uniche da interrogare su TMDB.`);
+
+        // 5. PONTE API TMDB
+        const loaderText = document.querySelector('#global-loader strong');
         let successCount = 0;
         let failCount = 0;
+        let failedShows = []; // Registro dei titoli persi
 
-        for (const [showName, watchedSet] of showToWatchedEpisodes.entries()) {
-            const tvdbId = showNameToTvdbId.get(showName);
+        for (let i = 0; i < showNames.length; i++) {
+            const originalName = showNames[i];
+            const cleanName = originalName.replace(/\s*\(\d{4}\)\s*$/, '').trim();
             
-            if (!tvdbId) {
-                console.warn(`[MIGRAZIONE] Ignorata: "${showName}" (Nessun ID TVDB associato nel file followed_tv_show)`);
-                failCount++;
-                continue;
+            if (loaderText) {
+                loaderText.innerText = `MIGRAZIONE: ${i + 1} / ${showNames.length}\n${cleanName}`;
             }
 
             try {
-                // Throttle coercitivo prima della chiamata
-                await this.sleep(this.delayMs);
-                
-                const tmdbId = await this.fetchTmdbIdFromTvdb(tvdbId);
-                
-                if (tmdbId) {
-                    console.log(`[MIGRAZIONE] [${showName}] TVDB:${tvdbId} -> TMDB:${tmdbId}. Importazione ${watchedSet.size} episodi in corso...`);
-                    
-                    // Iniezione nel sistema della PWA
-                    await this.injectSeriesIntoLocalDB(String(tmdbId), Array.from(watchedSet));
-                    successCount++;
-                } else {
-                    console.warn(`[MIGRAZIONE] Fallimento: "${showName}" (TMDB non riconosce l'ID TVDB ${tvdbId})`);
+                const searchRes = await fetch(TMDB_CONFIG.buildSearchUrl(encodeURIComponent(cleanName), 'tv'));
+                const searchData = await searchRes.json();
+
+                if (!searchData.results || searchData.results.length === 0) {
+                    console.warn(`[MIGRATOR] Ignorata: "${originalName}". TMDB non ha trovato corrispondenze.`);
                     failCount++;
+                    failedShows.push(originalName);
+                    continue;
                 }
 
-            } catch (error) {
-                console.error(`[MIGRAZIONE] Errore critico su "${showName}":`, error);
+                const tmdbId = searchData.results[0].id;
+
+                // 1. CHIAMATA DI DETTAGLIO OBBLIGATORIA (per ottenere l'array 'seasons')
+                const detailRes = await fetch(`${TMDB_CONFIG.BASE_URL}/tv/${tmdbId}?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT`);
+                if (!detailRes.ok) {
+                    console.warn(`[MIGRATOR] Impossibile scaricare i dettagli completi per ID ${tmdbId}`);
+                    failCount++;
+                    failedShows.push(originalName);
+                    continue;
+                }
+                const tmdbFullData = await detailRes.json();
+
+                // 2. MODELLO UTENTE E CACHE
+                const userSeriesModel = {
+                    id: tmdbId,
+                    status: "watching", 
+                    added_at: Date.now(),
+                    watched_count: seriesData[originalName].episodes.length,
+                    watched_minutes: seriesData[originalName].episodes.length * 45,
+                    progress: {},
+                    is_favorite: false,
+                    media_type: 'tv'
+                };
+
+                seriesData[originalName].episodes.forEach(epKey => {
+                    userSeriesModel.progress[epKey] = Date.now();
+                });
+
+                await UserLibrary.setItem(String(tmdbId), userSeriesModel);
+                
+                // Inietta il DNA strutturale completo nella cache
+                tmdbFullData.media_type = 'tv';
+                tmdbFullData.last_updated = Date.now();
+                await TmdbCache.setItem(String(tmdbId), tmdbFullData);
+
+                successCount++;
+
+                // 3. INNESCO AUTOMATICO DEL DOWNLOAD STAGIONI (identico a backgroundSeasonSync)
+                if (tmdbFullData.seasons && tmdbFullData.seasons.length > 0) {
+                    // Sfruttiamo la funzione nativa globale definita in app.js per scaricare i dettagli delle stagioni
+                    backgroundSeasonSync(tmdbId, tmdbFullData.seasons);
+                }
+                
+                // Freno artificiale per impedire a TMDB di bloccare l'IP
+                await sleep(350);
+
+            } catch (err) {
+                console.error(`[MIGRATOR] Errore di rete su ${originalName}:`, err);
                 failCount++;
+                failedShows.push(originalName);
             }
         }
 
-        console.log(`\n======================================\n[MIGRAZIONE COMPLETATA]\nSerie importate con successo: ${successCount}\nFallimenti/Non trovate: ${failCount}\n======================================\n`);
+        console.log(`[MIGRATOR] Operazione Conclusa. Titoli Trasferiti: ${successCount}. Titoli Persi: ${failCount}.`);
         
-        // Forza il refresh della home per mostrare i dati importati
-        if (typeof renderHome === 'function') renderHome();
-    }
+        // Esegue il check di auto-completamento su tutte le chiavi salvate dopo 4 secondi (dando tempo al background sync)
+        setTimeout(async () => {
+            console.log("[MIGRATOR] Esecuzione scansione post-migrazione per determinare le serie completate...");
+            const keys = await UserLibrary.keys();
+            for (const key of keys) {
+                if (typeof checkAutoCompletion === 'function') {
+                    await checkAutoCompletion(key);
+                }
+            }
+            console.log("[MIGRATOR] Ricalcolo stati terminato.");
+            silentCacheUpdate();
+        }, 4000);
 
-    async fetchTmdbIdFromTvdb(tvdbId) {
-        const url = `${TMDB_CONFIG.BASE_URL}/find/${tvdbId}?api_key=${this.tmdbApiKey}&external_source=tvdb_id`;
-        const response = await fetch(url);
-        
-        if (!response.ok) return null;
-        
-        const data = await response.json();
-        
-        if (data.tv_results && data.tv_results.length > 0) {
-            return data.tv_results[0].id;
-        }
-        return null;
-    }
-
-    // Questa funzione dialoga direttamente con localForage saltando la UI
-    async injectSeriesIntoLocalDB(tmdbId, watchedEpisodesArray) {
-        // Scarica i metadati di base per la libreria
-        const seriesUrl = `${TMDB_CONFIG.BASE_URL}/tv/${tmdbId}?api_key=${this.tmdbApiKey}&language=it-IT`;
-        const seriesRes = await fetch(seriesUrl);
-        if (!seriesRes.ok) throw new Error("Recupero metadati fallito");
-        const seriesData = await seriesRes.json();
-
-        // 1. Salva in UserLibrary
-        const libraryPayload = {
-            id: tmdbId,
-            name: seriesData.name,
-            poster_path: seriesData.poster_path,
-            status: seriesData.status === 'Ended' || seriesData.status === 'Canceled' ? 'completed' : 'watching',
-            progress: {}, // Lo riempiamo sotto
-            addedAt: Date.now(),
-            lastUpdated: Date.now()
+        return {
+            successCount: successCount,
+            failCount: failCount,
+            failedShows: failedShows
         };
-
-        // Popola il progress con gli episodi importati
-        watchedEpisodesArray.forEach(epKey => {
-            libraryPayload.progress[epKey] = true;
-        });
-
-        await UserLibrary.setItem(tmdbId, libraryPayload);
-
-        // 2. Registra la cache (vuota per le stagioni, il TTL in background farà il lavoro sporco successivamente per non bloccare l'importazione)
-        const cachePayload = {
-            _cachedAt: Date.now(),
-            id: seriesData.id,
-            name: seriesData.name,
-            number_of_seasons: seriesData.number_of_seasons,
-            status: seriesData.status,
-            poster_path: seriesData.poster_path,
-            episode_run_time: seriesData.episode_run_time,
-            detailed_seasons: {} 
-        };
-
-        await TmdbCache.setItem(tmdbId, cachePayload);
-    }
-
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
