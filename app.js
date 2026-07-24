@@ -86,8 +86,8 @@ async function searchMedia() {
     const resultsContainer = document.getElementById('search-results');
     const query = inputElement.value.trim();
     
-    // Leggi il radio button selezionato
-    const mediaType = document.querySelector('input[name="search-type"]:checked').value;
+    // Leggi il radio button selezionato ('multi' o 'person')
+    const searchType = document.querySelector('input[name="search-type"]:checked').value;
 
     if (!query) return;
     lastSearchQuery = query;
@@ -96,42 +96,51 @@ async function searchMedia() {
     
     try {
         resultsContainer.innerHTML = '<span style="color: var(--text-muted);">Ricerca in corso...</span>';
-        // Passa il type all'API config
-        const url = TMDB_CONFIG.buildSearchUrl(query, mediaType);
+        
+        // Costruiamo la URL scavalcando TMDB_CONFIG per sfruttare l'endpoint 'multi' nativo in sicurezza
+        const url = searchType === 'multi' 
+            ? `${TMDB_CONFIG.BASE_URL}/search/multi?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&query=${encodeURIComponent(query)}`
+            : `${TMDB_CONFIG.BASE_URL}/search/person?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&query=${encodeURIComponent(query)}`;
+
         const response = await fetch(url);
         if (!response.ok) throw new Error("Errore durante la ricerca.");
         
         const data = await response.json();
         resultsContainer.innerHTML = '';
 
-        if (data.results.length === 0) {
+        // Filtro di sicurezza: puliamo i risultati 'multi' da eventuali persone spurie o media non supportati
+        let validResults = data.results;
+        if (searchType === 'multi') {
+            validResults = validResults.filter(item => item.media_type === 'tv' || item.media_type === 'movie');
+        }
+
+        if (validResults.length === 0) {
             resultsContainer.innerHTML = '<span style="color: var(--danger);">Nessun risultato trovato.</span>';
             return;
         }
 
-        data.results.slice(0, 8).forEach(item => {
+        validResults.slice(0, 8).forEach(item => {
             let title, detailLine, badgeColor, badgeText, actionBtn, imgPath;
+            // Se la ricerca è mista, usa il media_type di TMDB per decidere come comportarsi
+            const mediaType = searchType === 'person' ? 'person' : item.media_type;
 
             if (mediaType === 'person') {
-                // Bivio Attori
                 title = item.name;
                 detailLine = item.known_for_department === 'Acting' ? 'Recitazione' : (item.known_for_department || 'Sconosciuto');
                 badgeColor = 'var(--text-muted)';
                 badgeText = 'PERSONA';
                 actionBtn = `<button class="btn btn-outline btn-small" onclick="openActorView(${item.id})">Apri</button>`;
-                imgPath = item.profile_path; // TMDB usa profile_path per le persone
+                imgPath = item.profile_path; 
             } else {
-                // Bivio Media (Film/TV)
                 const rawDate = mediaType === 'tv' ? item.first_air_date : item.release_date;
                 detailLine = rawDate ? `Anno: ${rawDate.substring(0, 4)}` : 'Anno: N/A';
                 title = mediaType === 'tv' ? item.name : item.title;
                 badgeColor = mediaType === 'tv' ? 'var(--text)' : 'var(--danger)';
                 badgeText = mediaType === 'tv' ? 'TV' : 'FILM';
                 actionBtn = `<button class="btn btn-outline btn-small" onclick="previewMedia(${item.id}, '${mediaType}')">Apri</button>`;
-                imgPath = item.poster_path; // TMDB usa poster_path per i media
+                imgPath = item.poster_path;
             }
 
-            // Fallback intelligente se l'immagine manca nei server TMDB
             const imgUrl = imgPath ? `${TMDB_CONFIG.IMAGE_BASE_URL}${imgPath}` : 'https://placehold.co/100x150/27272a/a1a1aa?text=N/D';
 
             const div = document.createElement('div');
@@ -871,229 +880,366 @@ async function renderLibrary() {
 async function renderStats() {
     currentContext = 'stats';
     const container = document.getElementById('stats-content');
-    container.innerHTML = '<div style="text-align: center; padding: 2rem;"><div style="width: 40px; height: 40px; border: 4px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div><span style="color: var(--text-muted); font-weight: 800; text-transform: uppercase;">Calcolo proiezioni analitiche...</span></div>';
+    container.innerHTML = '<div style="text-align: center; padding: 3rem;"><div style="width: 50px; height: 50px; border: 4px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1.5rem;"></div><span style="color: var(--text-muted); font-weight: 900; text-transform: uppercase; letter-spacing: 2px;">Generazione Wrapped...</span></div>';
     
     try {
         const keys = await UserLibrary.keys();
         
-        // Strutture Dati Separate
         let tv = { tracked: 0, watching: 0, completed: 0, planned: 0, paused: 0, epsWatched: 0, minutes: 0 };
         let movie = { tracked: 0, planned: 0, completed: 0, minutes: 0 };
+        
+        let recentMinutes30Days = 0;
+        const now = Date.now();
+        const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+        const sixMonthsAgo = now - (180 * 24 * 60 * 60 * 1000);
+        
+        const genreCounts = {};
+        const networkCounts = {};
+        const graveyard = [];
+        
+        let topMedia = null;
+        let maxMediaMinutes = 0;
+        let heroBackdrop = '';
+        
+        // Ora raccogliamo i POSTER (verticali) per le card, non più i backdrop (orizzontali)
+        let tvFavPosters = [];
+        let tvAnyPosters = [];
+        let movieFavPosters = [];
+        let movieAnyPosters = [];
         
         for (const key of keys) {
             const userItem = await UserLibrary.getItem(key);
             const tmdbData = await TmdbCache.getItem(key);
+            if (!tmdbData) continue;
+
+            const type = tmdbData.media_type || userItem.media_type || 'tv';
+            const title = type === 'tv' ? tmdbData.name : tmdbData.title;
+            const runtime = type === 'movie' ? (tmdbData.runtime || 120) : ((tmdbData.episode_run_time && tmdbData.episode_run_time[0]) ? tmdbData.episode_run_time[0] : 45);
             
-            // Deduciamo il tipo con fallback al salvataggio locale
-            const type = (tmdbData && tmdbData.media_type) ? tmdbData.media_type : (userItem.media_type || 'tv');
+            const isFav = userItem.is_favorite === true || userItem.is_favorite === 'true' || userItem.favorite === true;
+
+            // Logica riprogrammata: estraiamo il poster per le card statistiche
+            if (tmdbData.poster_path) {
+                const bgUrl = `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}`;
+                if (type === 'tv') {
+                    if (isFav) tvFavPosters.push(bgUrl);
+                    else tvAnyPosters.push(bgUrl);
+                } else {
+                    if (isFav) movieFavPosters.push(bgUrl);
+                    else movieAnyPosters.push(bgUrl);
+                }
+            }
+            
+            let lastInteraction = userItem.added_at || 0;
+            let itemMinutes = 0;
+
+            if (userItem.progress && Object.keys(userItem.progress).length > 0) {
+                lastInteraction = Math.max(...Object.values(userItem.progress));
+                for (const [epKey, ts] of Object.entries(userItem.progress)) {
+                    if (ts > thirtyDaysAgo) recentMinutes30Days += runtime;
+                }
+            }
+
+            if (type === 'tv') {
+                let actualEps = 0;
+                if (userItem.progress && Object.keys(userItem.progress).length > 0) {
+                    actualEps = Object.keys(userItem.progress).filter(k => k.match(/S\d+E\d+/)).length;
+                } else {
+                    actualEps = userItem.watched_count || 0;
+                }
+                
+                itemMinutes = userItem.watched_minutes !== undefined && userItem.watched_minutes > 0 
+                    ? userItem.watched_minutes 
+                    : (actualEps * runtime);
+                    
+                tv.epsWatched += actualEps;
+            } else {
+                if (userItem.status === 'completed') itemMinutes = runtime;
+            }
+
+            // Il Top Media continua a usare il backdrop per l'header Hero
+            if (itemMinutes > maxMediaMinutes) {
+                maxMediaMinutes = itemMinutes;
+                topMedia = { 
+                    title: title, 
+                    type: type,
+                    poster: tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : '',
+                    backdrop: tmdbData.backdrop_path ? `https://image.tmdb.org/t/p/w780${tmdbData.backdrop_path}` : ''
+                };
+            }
+
+            if (type === 'tv' && (userItem.status === 'watching' || userItem.status === 'paused') && lastInteraction > 0 && lastInteraction < sixMonthsAgo) {
+                graveyard.push({
+                    id: key,
+                    title: title,
+                    poster: tmdbData.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${tmdbData.poster_path}` : '',
+                    daysDead: Math.round((now - lastInteraction) / (1000 * 60 * 60 * 24))
+                });
+            }
+
+            if (userItem.status === 'completed' || (userItem.watched_count && userItem.watched_count > 0)) {
+                if (tmdbData.genres) {
+                    tmdbData.genres.forEach(g => { genreCounts[g.name] = (genreCounts[g.name] || 0) + 1; });
+                }
+                if (type === 'tv' && tmdbData.networks) {
+                    tmdbData.networks.forEach(n => { 
+                        if (!networkCounts[n.name]) {
+                            networkCounts[n.name] = { count: 0, logo: n.logo_path };
+                        }
+                        networkCounts[n.name].count += 1;
+                    });
+                }
+            }
             
             if (type === 'tv') {
                 tv.tracked++;
                 const status = userItem.status || 'watching';
-                const eps = userItem.watched_count || 0; // Spostato qui in alto per poterlo valutare
+                const eps = userItem.watched_count || 0; 
                 
-                // ALLINEAMENTO LOGICO CON LA LIBRERIA:
-                if (status === 'completed') {
-                    tv.completed++;
-                } else if (status === 'paused') {
-                    tv.paused++;
-                } else if (status === 'planned' || (status === 'watching' && eps === 0)) {
-                    tv.planned++; // Se è "in corso" ma hai visto 0 episodi, è di fatto "Da vedere"
-                } else if (status === 'watching' && eps > 0) {
-                    tv.watching++; // È in corso solo se hai visto almeno un episodio
-                }
+                if (status === 'completed') tv.completed++;
+                else if (status === 'paused') tv.paused++;
+                else if (status === 'planned' || (status === 'watching' && eps === 0)) tv.planned++;
+                else if (status === 'watching' && eps > 0) tv.watching++;
                 
-                tv.epsWatched += eps;
-                
-                if (userItem.watched_minutes !== undefined) {
-                    tv.minutes += userItem.watched_minutes;
-                } else {
-                    let runtime = 45; 
-                    if(tmdbData && tmdbData.episode_run_time && tmdbData.episode_run_time.length > 0) runtime = tmdbData.episode_run_time[0];
-                    tv.minutes += (eps * runtime);
-                }
+                tv.minutes += itemMinutes;
             } else {
                 movie.tracked++;
                 const status = userItem.status || 'planned';
-                if (status === 'completed') movie.completed++;
-                else movie.planned++; // Fallback implicito per i film
-                
-                let runtime = (tmdbData && tmdbData.runtime) ? tmdbData.runtime : 120;
-                if (status === 'completed') {
-                    movie.minutes += runtime;
-                }
+                if (status === 'completed') { movie.completed++; movie.minutes += itemMinutes; }
+                else movie.planned++;
             }
         }
         
-        // Helper per la conversione del tempo
-        // Helper per la conversione base (per mantenere 3968h 32m nel cruscotto)
-        const formatTime = (totalMins) => {
-            return {
-                h: Math.floor(totalMins / 60),
-                m: totalMins % 60
-            };
-        };
+        const topGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const topNetworks = Object.entries(networkCounts).sort((a, b) => b[1].count - a[1].count).slice(0, 1);
+        graveyard.sort((a, b) => b.daysDead - a.daysDead);
+        
+        if (topMedia && topMedia.backdrop) heroBackdrop = topMedia.backdrop;
+        
+        const getRand = (arr) => arr.length > 0 ? arr[Math.floor(Math.random() * arr.length)] : '';
+        const cardBgTv = tvFavPosters.length > 0 ? getRand(tvFavPosters) : getRand(tvAnyPosters);
+        const cardBgMovie = movieFavPosters.length > 0 ? getRand(movieFavPosters) : getRand(movieAnyPosters);
+        
+        const formatTime = (totalMins, isLarge = false) => {
+            if (totalMins === 0) return `<span style="${isLarge ? 'font-size: 1.8rem;' : ''} font-weight: 900;">0</span><span style="${isLarge ? 'font-size: 0.9rem;' : 'font-size: 0.7rem;'} color: var(--text-muted); font-weight: 700; margin-left: 0.1rem;">min</span>`;
+            
+            const y = Math.floor(totalMins / 525600);
+            let rem = totalMins % 525600;
+            const mo = Math.floor(rem / 43200);
+            rem %= 43200;
+            const d = Math.floor(rem / 1440);
+            rem %= 1440;
+            const h = Math.floor(rem / 60);
+            const m = rem % 60;
 
-        // NUOVO HELPER: Algoritmo brutale per il tempo umano scalare
-        const formatHumanTime = (totalMins) => {
-            if (totalMins === 0) return "0 minuti";
-            
-            const minsInHour = 60;
-            const minsInDay = 24 * minsInHour;
-            const minsInMonth = 30 * minsInDay;
-            const minsInYear = 365 * minsInDay;
+            const valStyle = isLarge ? 'font-size: 2.2rem; font-weight: 900; line-height: 1; text-shadow: 0 2px 10px rgba(0,0,0,0.3);' : 'font-weight: 900; color: #ffffff; text-shadow: 0 2px 4px rgba(0,0,0,0.8);';
+            const unitStyle = isLarge ? 'font-size: 1rem; color: var(--text-muted); font-weight: 800; margin-right: 0.5rem; margin-left: 0.1rem;' : 'font-size: 0.7rem; font-weight: 700; color: rgba(255,255,255,0.7); margin-right: 0.4rem; margin-left: 0.1rem;';
 
-            let y = Math.floor(totalMins / minsInYear);
-            let remainder = totalMins % minsInYear;
-            
-            let mo = Math.floor(remainder / minsInMonth);
-            remainder = remainder % minsInMonth;
-            
-            let d = Math.floor(remainder / minsInDay);
-            remainder = remainder % minsInDay;
-            
-            let h = Math.floor(remainder / minsInHour);
-            let m = remainder % minsInHour;
+            let res = "";
+            if (y > 0) res += `<span style="${valStyle}">${y}</span><span style="${unitStyle}">anni</span>`;
+            if (y > 0 || mo > 0) res += `<span style="${valStyle}">${mo}</span><span style="${unitStyle}">mesi</span>`;
+            if (y > 0 || mo > 0 || d > 0) res += `<span style="${valStyle}">${d}</span><span style="${unitStyle}">gg</span>`;
+            if (y > 0 || mo > 0 || d > 0 || h > 0) res += `<span style="${valStyle}">${h}</span><span style="${unitStyle}">h</span>`;
+            res += `<span style="${valStyle}">${m}</span><span style="${unitStyle}">min</span>`;
 
-            let parts = [];
-            if (y > 0) parts.push(`<strong style="color: var(--text);">${y}</strong> ann${y === 1 ? 'o' : 'i'}`);
-            if (mo > 0) parts.push(`<strong style="color: var(--text);">${mo}</strong> mes${mo === 1 ? 'e' : 'i'}`);
-            if (d > 0) parts.push(`<strong style="color: var(--text);">${d}</strong> giorn${d === 1 ? 'o' : 'i'}`);
-            if (h > 0) parts.push(`<strong style="color: var(--text);">${h}</strong> or${h === 1 ? 'a' : 'e'}`);
-            if (m > 0) parts.push(`<strong style="color: var(--text);">${m}</strong> minut${m === 1 ? 'o' : 'i'}`);
-
-            if (parts.length === 1) return parts[0];
-            if (parts.length === 2) return parts.join(' e ');
-            
-            const last = parts.pop();
-            return parts.join(', ') + ' e ' + last;
+            return `<div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.1rem;">${res}</div>`;
         };
 
         const tvTime = formatTime(tv.minutes);
         const movieTime = formatTime(movie.minutes);
-        const totalTime = formatTime(tv.minutes + movie.minutes);
-        const humanReadableTotal = formatHumanTime(tv.minutes + movie.minutes);
-
-        // Helper per le percentuali
-        const getPct = (val, total) => total > 0 ? Math.round((val / total) * 100) : 0;
         
-        // Calcolo metriche per barra Serie
+        const totalTimeHero = formatTime(tv.minutes + movie.minutes, true);
+        const recentTimeHero = formatTime(recentMinutes30Days, true);
+
+        const getPct = (val, total) => total > 0 ? Math.round((val / total) * 100) : 0;
         const tvActivePct = getPct(tv.watching, tv.tracked);
         const tvDonePct = getPct(tv.completed, tv.tracked);
         const tvPausedPct = getPct(tv.paused, tv.tracked);
-        const tvPlannedPct = getPct(tv.planned, tv.tracked);
-
-        // Calcolo metriche per barra Film
         const movieDonePct = getPct(movie.completed, movie.tracked);
-        const moviePlannedPct = getPct(movie.planned, movie.tracked);
 
-        // Fabbrica del DOM Brutalista
-        container.innerHTML = `
-            <!-- SEZIONE TOTALE -->
-            <div style="border: 2px solid var(--text); padding: 1.5rem; background: var(--card-bg); margin-bottom: 2rem; position: relative; overflow: hidden;">
-                <div style="position: absolute; top: -10px; right: -10px; font-size: 6rem; opacity: 0.03; font-weight: 900; pointer-events: none; line-height: 1;">&Sigma;</div>
-                <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 900; letter-spacing: 1px; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem;">Quadro Complessivo</div>
+        const tvConic = `conic-gradient(#ffffff 0% ${tvDonePct}%, rgba(255,255,255,0.4) ${tvDonePct}% ${tvDonePct + tvActivePct}%, rgba(255,255,255,0.1) ${tvDonePct + tvActivePct}% 100%)`;
+        const movieConic = `conic-gradient(#ffffff 0% ${movieDonePct}%, rgba(255,255,255,0.1) ${movieDonePct}% 100%)`;
+
+        let networkHtml = '';
+        if (topNetworks.length > 0) {
+            const netName = topNetworks[0][0];
+            const netLogo = topNetworks[0][1].logo;
+            networkHtml = `
+                <div style="margin-top: 1.2rem; display: flex; flex-direction: column; align-items: center; gap: 0.8rem; background: var(--input-bg); padding: 1rem; border-radius: 8px;">
+                    <span style="font-size: 0.65rem; font-weight: 900; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">Network Dominante</span>
+                    ${netLogo 
+                        ? `<img src="https://image.tmdb.org/t/p/w200${netLogo}" alt="${netName}" style="max-height: 35px; max-width: 120px; object-fit: contain; filter: var(--logo-filter);">` 
+                        : `<span style="font-size: 1.1rem; font-weight: 900; color: var(--text);">${netName}</span>`
+                    }
+                </div>
+            `;
+        }
+
+        let html = `
+            <!-- WRAPPED HERO CARD -->
+            <div style="border-radius: var(--radius); margin-bottom: 1.5rem; position: relative; overflow: hidden; background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.3); min-height: 280px; display: flex; flex-direction: column; justify-content: space-between;">
+                ${heroBackdrop ? `<div style="position: absolute; inset: 0; background-image: url('${heroBackdrop}'); background-size: cover; background-position: center; opacity: 0.6;"></div>` : ''}
+                <div style="position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.9) 100%);"></div>
                 
-                <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1.5rem;">
-                    <div style="flex-shrink: 0;">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800; margin-bottom: 0.2rem;">Opere Segnate</div>
-                        <div style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${tv.tracked + movie.tracked}</div>
+                <div style="position: relative; z-index: 10; padding: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div style="font-size: 0.7rem; color: rgba(255,255,255,0.8); text-transform: uppercase; font-weight: 900; letter-spacing: 2px;">Il Tuo Tempo</div>
+                    <div style="font-size: 0.7rem; font-weight: 900; background: rgba(255,255,255,0.2); backdrop-filter: blur(5px); color: #fff; padding: 0.3rem 0.6rem; border-radius: 20px;">${tv.tracked + movie.tracked} Opere</div>
+                </div>
+
+                <div style="position: relative; z-index: 10; padding: 1.5rem;">
+                    <div style="color: #fff; margin-bottom: 1.5rem;">
+                        <div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.1rem;">
+                            ${totalTimeHero.replace(/var\(--text-muted\)/g, 'rgba(255,255,255,0.8)').replace(/text-shadow:[^;]+;/g, 'text-shadow: 0 2px 10px rgba(0,0,0,0.8);')}
+                        </div>
                     </div>
-                    <div style="flex: 1; min-width: 120px;">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800; margin-bottom: 0.2rem;">Tempo Totale</div>
-                        <div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.5rem;">
-                            <span style="white-space: nowrap;">
-                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.h}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700; margin-left: 0.1rem;">h</span>
-                            </span>
-                            <span style="white-space: nowrap;">
-                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.m}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700; margin-left: 0.1rem;">m</span>
-                            </span>
+                    
+                    ${topMedia ? `
+                    <div style="display: flex; align-items: center; gap: 1rem; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 1rem;">
+                        <img src="${topMedia.poster || 'https://placehold.co/40x60/27272a/a1a1aa?text=N/D'}" style="width: 45px; height: 68px; border-radius: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); object-fit: cover;">
+                        <div>
+                            <div style="font-size: 0.65rem; color: rgba(255,255,255,0.7); text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 0.2rem;">L'Ossessione Suprema</div>
+                            <div style="font-size: 1rem; color: #fff; font-weight: 900; line-height: 1.1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${topMedia.title}</div>
+                        </div>
+                    </div>` : ''}
+                </div>
+            </div>
+
+            <!-- WRAPPED DNA & RECENT -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; align-items: stretch;">
+                ${topGenres.length > 0 ? `
+                <div style="flex: 1; min-width: 200px; border-radius: var(--radius); background: var(--card-bg); padding: 1.5rem; border: 1px solid var(--border); display: flex; flex-direction: column;">
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 900; letter-spacing: 1px; margin-bottom: 1.2rem; text-align: center;">Il tuo DNA (Top 5)</div>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.6rem;">
+                        ${topGenres.map((g, i) => `
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 0.5rem; border-bottom: 1px solid var(--input-bg);">
+                                <div style="font-size: 0.85rem; font-weight: 800; color: ${i === 0 ? 'var(--text)' : 'var(--text-muted)'};">${i+1}. ${g[0]}</div>
+                                <div style="font-size: 0.65rem; font-weight: 800; color: var(--text-muted); background: var(--input-bg); padding: 0.2rem 0.5rem; border-radius: 12px;">${g[1]} opere</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${networkHtml}
+                </div>` : ''}
+
+                <div style="flex: 1; min-width: 200px; border-radius: var(--radius); background: linear-gradient(135deg, var(--card-bg) 0%, var(--input-bg) 100%); padding: 1.5rem; border: 1px solid var(--border); display: flex; flex-direction: column; justify-content: center; position: relative; overflow: hidden;">
+                    <div style="position: absolute; right: -15px; top: -15px; opacity: 0.03; transform: scale(3.5);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    </div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 900; letter-spacing: 1px; margin-bottom: 1.2rem; display: flex; align-items: center; gap: 0.4rem; position: relative; z-index: 10;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                        Ultimi 30 Giorni
+                    </div>
+                    <div style="display: flex; justify-content: flex-start; align-items: baseline; position: relative; z-index: 10;">
+                        ${recentTimeHero.replace(/color: #ffffff/g, 'color: var(--text)').replace(/text-shadow:[^;]+;/g, '')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- I TUOI PREFERITI -->
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 2.5rem;">
+                
+                <!-- CARD SERIE TV -->
+                <div style="flex: 1; min-width: 250px; border-radius: var(--radius); background: #121212; position: relative; overflow: hidden; text-align: center; border: 1px solid var(--border); box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+                    <!-- LOGICA BACKGROUND AGGIORNATA: Utilizzo dei Poster (Verticali) invece dei Backdrop -->
+                    ${cardBgTv ? `<div style="position: absolute; inset: 0; background-image: url('${cardBgTv}'); background-size: cover; background-position: top center; opacity: 0.7; -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.1) 85%); mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.1) 85%);"></div>` : ''}
+                    
+                    <div style="position: relative; z-index: 10; padding: 2rem 1.5rem;">
+                        <h3 style="font-size: 1.2rem; text-transform: uppercase; color: #ffffff; margin-bottom: 2rem; letter-spacing: 2px; text-shadow: 0 2px 8px rgba(0,0,0,1); font-weight: 900;">Serie TV</h3>
+                        
+                        <div style="position: relative; width: 140px; height: 140px; border-radius: 50%; background: ${tvConic}; margin: 0 auto 2.5rem auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 15px rgba(0,0,0,0.5);">
+                            <div style="width: 116px; height: 116px; background: #121212; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 2px 10px rgba(0,0,0,1);">
+                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1; color: #ffffff; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">${tvDonePct}%</span>
+                                <span style="font-size: 0.6rem; font-weight: 800; color: rgba(255,255,255,0.7); text-transform: uppercase; margin-top: 0.3rem; letter-spacing: 1px;">Completate</span>
+                            </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; text-align: center; margin-bottom: 2rem;">
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: #ffffff;">${tv.completed}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Pari/Fine</div></div>
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: #ffffff;">${tv.watching}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">In Corso</div></div>
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: rgba(255,255,255,0.5);">${tv.planned}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Da Vedere</div></div>
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: rgba(255,255,255,0.3);">${tv.paused}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">In Pausa</div></div>
+                        </div>
+                        
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem; gap: 0.4rem;">
+                            ${tvTime}
+                            <div style="font-size: 0.8rem; font-weight: 700; color: rgba(255,255,255,0.6);">Episodi visti: <strong style="color: #ffffff;">${tv.epsWatched}</strong></div>
                         </div>
                     </div>
                 </div>
-                <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); background: var(--input-bg); padding: 0.75rem; border-left: 4px solid var(--text); line-height: 1.5;">
-                    Equivale a ${humanReadableTotal} spesi ininterrottamente davanti a uno schermo.
+
+                <!-- CARD FILM -->
+                <div style="flex: 1; min-width: 250px; border-radius: var(--radius); background: #121212; position: relative; overflow: hidden; text-align: center; border: 1px solid var(--border); box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+                    ${cardBgMovie ? `<div style="position: absolute; inset: 0; background-image: url('${cardBgMovie}'); background-size: cover; background-position: top center; opacity: 0.7; -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.1) 85%); mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.1) 85%);"></div>` : ''}
+
+                    <div style="position: relative; z-index: 10; padding: 2rem 1.5rem;">
+                        <h3 style="font-size: 1.2rem; text-transform: uppercase; color: #ffffff; margin-bottom: 2rem; letter-spacing: 2px; text-shadow: 0 2px 8px rgba(0,0,0,1); font-weight: 900;">Film</h3>
+                        
+                        <div style="position: relative; width: 140px; height: 140px; border-radius: 50%; background: ${movieConic}; margin: 0 auto 2.5rem auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 5px 15px rgba(0,0,0,0.5);">
+                            <div style="width: 116px; height: 116px; background: #121212; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: inset 0 2px 10px rgba(0,0,0,1);">
+                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1; color: #ffffff; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">${movieDonePct}%</span>
+                                <span style="font-size: 0.6rem; font-weight: 800; color: rgba(255,255,255,0.7); text-transform: uppercase; margin-top: 0.3rem; letter-spacing: 1px;">Visti</span>
+                            </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; text-align: center; margin-bottom: 2rem;">
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: #ffffff;">${movie.completed}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Visti</div></div>
+                            <div><div style="font-size: 1.4rem; font-weight: 900; color: rgba(255,255,255,0.5);">${movie.planned}</div><div style="font-size: 0.7rem; color: rgba(255,255,255,0.6); font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Da Vedere</div></div>
+                        </div>
+                        
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem; gap: 0.4rem;">
+                            ${movieTime}
+                            <div style="font-size: 0.8rem; font-weight: 700; color: rgba(255,255,255,0.6);">Totale tracciati: <strong style="color: #ffffff;">${movie.tracked}</strong></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- SEZIONE SERIE TV -->
+            <!-- CIMITERO VISIVO -->
+            ${graveyard.length > 0 ? `
             <div style="margin-bottom: 2rem;">
-                <h3 style="font-size: 1.1rem; text-transform: uppercase; color: var(--text); border-bottom: 2px solid var(--text); padding-bottom: 0.5rem; margin-bottom: 1rem;">Serie TV</h3>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Totali</div>
-                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${tv.tracked}</div>
-                    </div>
-                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Episodi Visti</div>
-                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${tv.epsWatched}</div>
-                    </div>
+                <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem;">
+                    <h3 style="font-size: 0.9rem; text-transform: uppercase; color: var(--text); font-weight: 900; letter-spacing: 1px;">Il Cimitero</h3>
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Smettila di mentirti</span>
                 </div>
-
-                <!-- GRAFICO A BARRA CSS: SERIE -->
-                <div style="margin-bottom: 1.5rem;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.3rem;">
-                        <span>In Corso (${tvActivePct}%)</span>
-                        <span>Completate (${tvDonePct}%)</span>
-                    </div>
-                    <div style="width: 100%; height: 12px; background: var(--input-bg); border-radius: 6px; display: flex; overflow: hidden; border: 1px solid var(--border);">
-                        <div style="width: ${tvActivePct}%; background: var(--primary);" title="In Corso: ${tv.watching}"></div>
-                        <div style="width: ${tvDonePct}%; background: var(--success);" title="Completate: ${tv.completed}"></div>
-                        <div style="width: ${tvPausedPct}%; background: var(--text-muted);" title="In Pausa: ${tv.paused}"></div>
-                        <div style="width: ${tvPlannedPct}%; background: transparent;" title="Da Vedere: ${tv.planned}"></div>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-top: 0.75rem; text-align: center;">
-                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--primary);">${tv.watching}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">In Corso</div></div>
-                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--success);">${tv.completed}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Pari/Fine</div></div>
-                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--text);">${tv.planned}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Da Vedere</div></div>
-                        <div><div style="font-size: 1.2rem; font-weight: 900; color: var(--text-muted);">${tv.paused}</div><div style="font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">In Pausa</div></div>
-                    </div>
-                </div>
-
-                <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 0.5rem;">
-                    <span>Tempo Totale Serie:</span>
-                    <strong style="color: var(--text);">${tvTime.h}h ${tvTime.m}m</strong>
+                <div style="display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 1rem; scrollbar-width: none;">
+                    ${graveyard.map(g => `
+                        <div style="flex-shrink: 0; width: 100px; position: relative; cursor: pointer;" onclick="dropSeries('${g.id}')">
+                            <img src="${g.poster || 'https://placehold.co/100x150/27272a/a1a1aa?text=N/D'}" style="width: 100px; height: 150px; object-fit: cover; border-radius: var(--radius); filter: grayscale(100%) contrast(1.2); opacity: 0.7; border: 1px solid var(--border); transition: all 0.2s;">
+                            <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%); border-radius: var(--radius);"></div>
+                            <div style="position: absolute; bottom: 8px; left: 8px; right: 8px; text-align: center;">
+                                <div style="color: #fff; font-size: 0.6rem; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); padding: 0.2rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);">Droppa</div>
+                                <div style="color: rgba(255,255,255,0.6); font-size: 0.55rem; font-weight: 800; margin-top: 0.3rem;">Morta da ${g.daysDead}g</div>
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
             </div>
-
-            <!-- SEZIONE FILM -->
-            <div>
-                <h3 style="font-size: 1.1rem; text-transform: uppercase; color: var(--danger); border-bottom: 2px solid var(--danger); padding-bottom: 0.5rem; margin-bottom: 1rem;">Film</h3>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tracciati</div>
-                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1;">${movie.tracked}</div>
-                    </div>
-                    <div style="border: 1px solid var(--border); padding: 1rem; background: var(--input-bg);">
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Visti</div>
-                        <div style="font-size: 1.8rem; font-weight: 900; line-height: 1; color: var(--danger);">${movie.completed}</div>
-                    </div>
-                </div>
-
-                <!-- GRAFICO A BARRA CSS: FILM -->
-                <div style="margin-bottom: 1.5rem;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.3rem;">
-                        <span>Visti (${movieDonePct}%)</span>
-                        <span>Da Vedere (${moviePlannedPct}%)</span>
-                    </div>
-                    <div style="width: 100%; height: 12px; background: var(--input-bg); border-radius: 6px; display: flex; overflow: hidden; border: 1px solid var(--border);">
-                        <div style="width: ${movieDonePct}%; background: var(--danger);" title="Visti: ${movie.completed}"></div>
-                        <div style="width: ${moviePlannedPct}%; background: transparent;" title="Da Vedere: ${movie.planned}"></div>
-                    </div>
-                </div>
-
-                <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 0.5rem;">
-                    <span>Tempo Totale Film:</span>
-                    <strong style="color: var(--text);">${movieTime.h}h ${movieTime.m}m</strong>
-                </div>
-            </div>
+            ` : ''}
         `;
+
+        container.innerHTML = html;
     } catch (e) {
         console.error("[CRITICO] Fallimento rendering Stats:", e);
-        container.innerHTML = '<div style="padding: 2rem; border: 2px solid var(--danger); background: var(--card-bg); color: var(--danger); font-weight: 800; text-align: center; text-transform: uppercase;">Impossibile elaborare i dati.<br>Database corrotto o irraggiungibile.</div>';
+        container.innerHTML = '<div style="padding: 2rem; border: 1px solid var(--text); background: var(--card-bg); color: var(--text); font-weight: 800; text-align: center; text-transform: uppercase;">Impossibile elaborare i dati.<br>Database corrotto.</div>';
+    }
+}
+
+
+// Funzione di utility per il Wall of Shame
+async function dropSeries(mediaId) {
+    const confirmation = await customConfirm("Vuoi declassare questa serie a 'Da Vedere' e resettare i contatori, ammettendo la sconfitta?", { confirmText: "Droppa", isDestructive: false });
+    if (!confirmation) return;
+    try {
+        const userSeries = await UserLibrary.getItem(String(mediaId));
+        if (userSeries) {
+            userSeries.status = 'planned';
+            userSeries.progress = {};
+            userSeries.watched_count = 0;
+            userSeries.watched_minutes = 0;
+            await UserLibrary.setItem(String(mediaId), userSeries);
+            renderStats(); // Ricarica le statistiche per vederla sparire dal cimitero
+        }
+    } catch (e) {
+        console.error(e);
     }
 }
 
@@ -2152,6 +2298,12 @@ function initBackupReminder() {
     }
 }
 
+// Attiva la ricerca in tempo reale con debounce (attesa di 500ms dopo che hai smesso di digitare)
+document.getElementById('search-input').addEventListener('input', debounce((e) => {
+    handleSearchInput(e.target.value);
+    if(e.target.value.trim() !== '') searchMedia();
+}, 500));
+
 async function triggerBackupReminderModal() {
     const confirmBackup = await customConfirm(
         "È passato del tempo dal tuo ultimo backup. Vuoi esportare una copia dei tuoi progressi ora?",
@@ -2708,21 +2860,40 @@ async function forceUpdateMetadata(mediaId) {
 // MOTORE DI SCOPERTA E RACCOMANDAZIONE
 // ==========================================
 let isDiscoveryLoaded = false;
+let currentExploreType = 'tv';
 
-function buildDiscoveryRow(title, items, type) {
+function buildDiscoveryRow(title, items, type, userLib = {}) {
     if (!items || items.length === 0) return '';
+    
     const cards = items.slice(0, 15).map(item => {
         const poster = item.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.poster_path}` : 'https://placehold.co/150x225/27272a/a1a1aa?text=N/D';
         const name = type === 'tv' ? item.name : item.title;
-        const badgeColor = type === 'tv' ? 'var(--text)' : 'var(--danger)';
-        const badgeText = type === 'tv' ? 'TV' : 'FILM';
-        const badgeTextColor = type === 'movie' ? '#ffffff' : 'var(--bg)';
+        
+        let overlayHtml = '';
+        let opacity = '1';
+        let borderColor = 'var(--border)';
+        let textColor = 'var(--text)';
+        
+        const userStatus = userLib[String(item.id)];
+        
+        if (userStatus) {
+            if (userStatus === 'completed') {
+                overlayHtml = `<div style="position: absolute; top: 4px; right: 4px; background: var(--success); color: white; font-size: 0.55rem; font-weight: 900; padding: 0.2rem 0.4rem; border-radius: 4px; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.5);">✓ VISTO</div>`;
+                opacity = '0.5'; 
+                borderColor = 'var(--success)';
+                textColor = 'var(--text-muted)';
+            } else {
+                // Stile assoluto slegato dal tema CSS: sfondo scuro translucido, testo bianco, bordo di stacco. Leggibile su qualsiasi locandina.
+                overlayHtml = `<div style="position: absolute; top: 4px; right: 4px; background: rgba(0, 0, 0, 0.75); color: #ffffff; font-size: 0.55rem; font-weight: 900; padding: 0.2rem 0.4rem; border-radius: 4px; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.5); backdrop-filter: blur(4px); border: 1px solid rgba(255, 255, 255, 0.25);">IN LIBRERIA</div>`;
+                borderColor = 'var(--text)'; // Usiamo il contrasto del testo per evidenziare il bordo della card
+            }
+        }
         
         return `
-            <div style="flex-shrink: 0; width: 100px; cursor: pointer; position: relative;" onclick="previewMedia(${item.id}, '${type}')" title="${name}">
-                <div style="position: absolute; top: 4px; left: 4px; background: ${badgeColor}; color: ${badgeTextColor}; font-size: 0.5rem; font-weight: 900; padding: 0.1rem 0.25rem; border-radius: 2px; z-index: 10;">${badgeText}</div>
-                <img src="${poster}" alt="${name}" style="width: 100px; height: 150px; object-fit: cover; border-radius: 4px; border: 1.5px solid var(--border); transition: border-color 0.2s;">
-                <div style="font-size: 0.7rem; font-weight: 800; line-height: 1.1; margin-top: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text);">${name}</div>
+            <div style="flex-shrink: 0; width: 105px; cursor: pointer; position: relative;" onclick="previewMedia(${item.id}, '${type}')" title="${name}">
+                ${overlayHtml}
+                <img src="${poster}" alt="${name}" style="width: 105px; height: 155px; object-fit: cover; border-radius: 4px; border: 2px solid ${borderColor}; opacity: ${opacity}; transition: all 0.2s;">
+                <div style="font-size: 0.7rem; font-weight: 800; line-height: 1.1; margin-top: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: ${textColor};">${name}</div>
             </div>
         `;
     }).join('');
@@ -2737,160 +2908,89 @@ function buildDiscoveryRow(title, items, type) {
     `;
 }
 
-// Utilità per lo stile delle pillole (Filtri)
-const pillStyle = "padding: 0.35rem 0.8rem; border-radius: 20px; border: 1.5px solid var(--border); background: transparent; color: var(--text-muted); font-size: 0.7rem; font-weight: 800; cursor: pointer; white-space: nowrap; transition: all 0.2s;";
-
 async function loadDiscovery() {
     currentContext = 'search'; 
-    if (isDiscoveryLoaded) return; 
-
-    const container = document.getElementById('discovery-content');
-    container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted); font-weight: 800; font-size: 0.8rem; text-transform: uppercase;">Inizializzazione radar...</div>';
+    const section = document.getElementById('discovery-section');
     
-    try {
-        let finalHtml = '';
-
-        // 1. PRIMA: Le tendenze (Esplorazione passiva)
-        const [tvRes, movieRes] = await Promise.all([
-            fetch(TMDB_CONFIG.buildTrendingUrl('tv')),
-            fetch(TMDB_CONFIG.buildTrendingUrl('movie'))
-        ]);
-        
-        const tvData = await tvRes.json();
-        const movieData = await movieRes.json();
-        
-        finalHtml += `<div id="trending-container">` + 
-                     buildDiscoveryRow('🔥 Serie TV del momento', tvData.results, 'tv') + 
-                     buildDiscoveryRow('🎬 Film più popolari', movieData.results, 'movie') + 
-                     `</div>`;
-
-        // 2. DOPO: I filtri (Esplorazione attiva, a cascata visiva)
-        finalHtml += `
-            <div id="filters-container" style="border-top: 1.5px solid var(--border); padding-top: 1.5rem; margin-top: 1rem;">
-                <h3 style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem; letter-spacing: 0.5px;">Esplora per Catalogo</h3>
-                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('provider', 8, 'Netflix', this)">Netflix</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('provider', 119, 'Prime', this)">Prime</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('provider', 337, 'Disney+', this)">Disney+</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('network', 49, 'HBO', this)">HBO</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('provider', 283, 'Crunchyroll', this)">Crunchyroll</button>
-                </div>
-
-                <h3 style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem; letter-spacing: 0.5px;">Esplora per Genere</h3>
-                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 10759, 'Azione & Avventura', this)">Azione/Avventura</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 16, 'Animazione', this)">Animazione</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 35, 'Commedia', this)">Commedia</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 80, 'Crime', this)">Crime</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 99, 'Documentario', this)">Documentario</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 18, 'Drammatico', this)">Drammatico</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 10751, 'Famiglia', this)">Famiglia</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 9648, 'Mistero', this)">Mistero</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 10764, 'Reality', this)">Reality</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 10765, 'Sci-Fi & Fantasy', this)">Sci-Fi & Fantasy</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 10768, 'Guerra & Politica', this)">Guerra/Politica</button>
-                    <button class="filter-btn" style="${pillStyle}" onclick="fetchCatalog('genre', 37, 'Western', this)">Western</button>
-                </div>
+    // Costruiamo lo scheletro della scoperta solo al primo avvio
+    if (!isDiscoveryLoaded) {
+        section.innerHTML = `
+            <div class="segmented-control" style="margin-bottom: 1.5rem; background: var(--card-bg);">
+                <input type="radio" id="explore-tv" name="explore-type" value="tv" checked onchange="loadExploreData('tv')">
+                <label for="explore-tv">Esplora Serie TV</label>
+                
+                <input type="radio" id="explore-movie" name="explore-type" value="movie" onchange="loadExploreData('movie')">
+                <label for="explore-movie">Esplora Film</label>
             </div>
-            
-            <div id="catalog-results" style="margin-top: 1rem; display: none;"></div>
+            <div id="explore-content"></div>
         `;
-        
-        container.innerHTML = finalHtml;
         isDiscoveryLoaded = true;
-    } catch (e) {
-        console.error(e);
-        container.innerHTML = '<span style="color: var(--danger); font-size: 0.8rem; font-weight: 800;">Errore di connessione. Radar offline.</span>';
+        await loadExploreData('tv'); // Caricamento predefinito
+    } else {
+        section.style.display = 'block'; // Ripristina la vista se proveniamo da un'altra tab
     }
 }
 
-async function fetchCatalog(type, id, name, buttonElement) {
-    // 1. INTERCETTAZIONE E TOGGLE
-    // Se il bottone cliccato è già quello attivo, spegne tutto e torna alla home delle ricerche
-    if (buttonElement.dataset.active === 'true') {
-        resetDiscovery();
-        return;
-    }
-
-    // Reset visuale e di stato per tutte le pillole
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.style.background = 'transparent';
-        btn.style.color = 'var(--text-muted)';
-        btn.style.borderColor = 'var(--border)';
-        btn.dataset.active = 'false'; // Azzera la memoria
-    });
+async function loadExploreData(type) {
+    currentExploreType = type;
+    const container = document.getElementById('explore-content');
+    container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted); font-weight: 800; font-size: 0.8rem; text-transform: uppercase;">Scansione cataloghi streaming...</div>';
     
-    // Accensione della pillola cliccata e salvataggio dello stato
-    buttonElement.style.background = 'var(--text)';
-    buttonElement.style.color = 'var(--bg)';
-    buttonElement.style.borderColor = 'var(--text)';
-    buttonElement.dataset.active = 'true';
-
-    // Nasconde le tendenze
-    document.getElementById('trending-container').style.display = 'none';
-
-    const resultBox = document.getElementById('catalog-results');
-    resultBox.style.display = 'block';
-    resultBox.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted); font-weight: 800; font-size: 0.8rem; text-transform: uppercase;">Estrazione catalogo in corso...</div>';
-
     try {
-        let url = '';
-        if (type === 'provider') url = `${TMDB_CONFIG.BASE_URL}/discover/tv?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=IT&with_watch_providers=${id}`;
-        else if (type === 'network') url = `${TMDB_CONFIG.BASE_URL}/discover/tv?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&with_networks=${id}`;
-        else if (type === 'genre') url = `${TMDB_CONFIG.BASE_URL}/discover/tv?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&with_genres=${id}`;
-
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (!data.results || data.results.length === 0) {
-            resultBox.innerHTML = '<span style="color: var(--text-muted);">Nessun risultato trovato.</span>';
-            return;
+        // 1. Snapshot della Libreria Utente
+        const keys = await UserLibrary.keys();
+        const userLib = {};
+        for (const k of keys) {
+            const item = await UserLibrary.getItem(k);
+            userLib[k] = item.status || 'planned'; 
         }
 
-        const cards = data.results.map(item => {
-            const poster = item.poster_path ? `${TMDB_CONFIG.IMAGE_BASE_URL}${item.poster_path}` : 'https://placehold.co/500x750/27272a/a1a1aa?text=N/D';
-            const title = item.name || item.title;
-            const isMovie = !!item.title; 
-            const badgeBg = isMovie ? 'var(--danger)' : 'var(--text)';
-            const badgeColor = isMovie ? '#ffffff' : 'var(--bg)';
-            const badgeText = isMovie ? 'FILM' : 'SERIE';
-            const mediaType = isMovie ? 'movie' : 'tv';
-
-            return `
-                <div class="series-card" style="position: relative;" onclick="previewMedia(${item.id}, '${mediaType}')">
-                    <div style="position: absolute; top: 5px; left: 5px; background: ${badgeBg}; color: ${badgeColor}; font-size: 0.6rem; font-weight: 900; padding: 0.15rem 0.35rem; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); z-index: 10;">${badgeText}</div>
-                    <img src="${poster}" alt="${title}">
-                    <div class="series-card-content">
-                        <span class="series-title" title="${title}">${title}</span>
-                        <span class="series-status" style="color: var(--primary);">DA SCOPRIRE</span>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        resultBox.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 2px solid var(--text); padding-bottom: 0.5rem;">
-                <h3 style="margin: 0; text-transform: uppercase; font-weight: 900; color: var(--text); font-size: 1.1rem;">Top 20: ${name}</h3>
-                <button class="btn btn-outline btn-small" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="resetDiscovery()">Chiudi</button>
-            </div>
-            <div class="library-grid">${cards}</div>
-        `;
+        // 2. Definizione delle direttrici API
+        const trendingUrl = TMDB_CONFIG.buildTrendingUrl(type);
+        const netflixUrl = `${TMDB_CONFIG.BASE_URL}/discover/${type}?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=IT&with_watch_providers=8`;
+        const primeUrl = `${TMDB_CONFIG.BASE_URL}/discover/${type}?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=IT&with_watch_providers=119`;
+        const disneyUrl = `${TMDB_CONFIG.BASE_URL}/discover/${type}?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=IT&with_watch_providers=337`;
+        const crunchyrollUrl = `${TMDB_CONFIG.BASE_URL}/discover/${type}?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=IT&with_watch_providers=283`;
         
+        // Risoluzione asimmetria strutturale per HBO:
+        // Serie TV: Ricerca sicura per Network (ID 49)
+        // Film: Interrogazione multipla (OR) per il nuovo brand Max (1899) e il vecchio HBO Max (384) in USA
+        const hboUrl = type === 'tv' 
+            ? `${TMDB_CONFIG.BASE_URL}/discover/tv?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&with_networks=49`
+            : `${TMDB_CONFIG.BASE_URL}/discover/movie?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT&sort_by=popularity.desc&watch_region=US&with_watch_providers=1899|384`;
+
+            // 3. Esecuzione Parallela
+        const [trendRes, netflixRes, primeRes, disneyRes, crunchyRes, hboRes] = await Promise.all([
+            fetch(trendingUrl), fetch(netflixUrl), fetch(primeUrl), fetch(disneyUrl), fetch(crunchyrollUrl), fetch(hboUrl)
+        ]);
+
+        const trendData = await trendRes.json();
+        const netflixData = await netflixRes.json();
+        const primeData = await primeRes.json();
+        const disneyData = await disneyRes.json();
+        const crunchyData = await crunchyRes.json();
+        const hboData = await hboRes.json();
+
+        // 4. Assemblaggio Interfaccia (Emoji rimosse)
+        let html = '';
+        const trendingTitle = type === 'tv' ? 'Top Serie TV del momento' : 'Top Film del momento';
+        
+        html += buildDiscoveryRow(trendingTitle, trendData.results, type, userLib);
+        html += buildDiscoveryRow('Popolari su Netflix', netflixData.results, type, userLib);
+        html += buildDiscoveryRow('Popolari su Prime Video', primeData.results, type, userLib);
+        html += buildDiscoveryRow('Popolari su Disney+', disneyData.results, type, userLib);
+        html += buildDiscoveryRow('Popolari su Crunchyroll', crunchyData.results, type, userLib);
+        html += buildDiscoveryRow('Popolari su HBO', hboData.results, type, userLib);
+
+        container.innerHTML = html;
     } catch (e) {
-        resultBox.innerHTML = '<span style="color: var(--danger); font-size: 0.75rem; font-weight: 800;">Errore nel recupero dati.</span>';
+        console.error(e);
+        container.innerHTML = '<span style="color: var(--danger); font-size: 0.8rem; font-weight: 800;">Errore critico di rete. Radar offline.</span>';
     }
 }
 
-function resetDiscovery() {
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.style.background = 'transparent';
-        btn.style.color = 'var(--text-muted)';
-        btn.style.borderColor = 'var(--border)';
-        btn.dataset.active = 'false'; // Pulisce la memoria
-    });
-    document.getElementById('catalog-results').style.display = 'none';
-    document.getElementById('trending-container').style.display = 'block';
-}
+
+
 
 function handleSearchInput(value) {
     const discoverySection = document.getElementById('discovery-section');
