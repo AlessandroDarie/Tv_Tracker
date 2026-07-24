@@ -959,16 +959,20 @@ async function renderStats() {
                 <div style="position: absolute; top: -10px; right: -10px; font-size: 6rem; opacity: 0.03; font-weight: 900; pointer-events: none; line-height: 1;">&Sigma;</div>
                 <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 900; letter-spacing: 1px; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem;">Quadro Complessivo</div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
-                    <div>
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Opere Segnate</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1.5rem;">
+                    <div style="flex-shrink: 0;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800; margin-bottom: 0.2rem;">Opere Segnate</div>
                         <div style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${tv.tracked + movie.tracked}</div>
                     </div>
-                    <div>
-                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">Tempo Totale</div>
-                        <div style="display: flex; align-items: baseline; gap: 0.1rem;">
-                            <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.h}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700;">h</span>
-                            <span style="font-size: 2.2rem; font-weight: 900; line-height: 1; margin-left: 0.2rem;">${totalTime.m}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700;">m</span>
+                    <div style="flex: 1; min-width: 120px;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800; margin-bottom: 0.2rem;">Tempo Totale</div>
+                        <div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.5rem;">
+                            <span style="white-space: nowrap;">
+                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.h}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700; margin-left: 0.1rem;">h</span>
+                            </span>
+                            <span style="white-space: nowrap;">
+                                <span style="font-size: 2.2rem; font-weight: 900; line-height: 1;">${totalTime.m}</span><span style="font-size: 1rem; color: var(--text-muted); font-weight: 700; margin-left: 0.1rem;">m</span>
+                            </span>
                         </div>
                     </div>
                 </div>
