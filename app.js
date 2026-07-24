@@ -371,7 +371,7 @@ async function renderHome() {
             }
 
             let remainingText = expectedEpisodes > watchedTvEpisodes
-                ? `<strong style="color: var(--text);">${watchedTvEpisodes} / ${expectedEpisodes}</strong> <span style="font-size:0.6rem;">EP.</span>` 
+                ? `<strong style="color: var(--text);">${watchedTvEpisodes} / ${expectedEpisodes}</strong> <span style="font-size:0.6rem;"></span>` 
                 : `<strong style="color: var(--success);">IN PARI</strong>`;
 
             if (maxS > 0) {
