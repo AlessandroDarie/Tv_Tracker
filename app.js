@@ -291,13 +291,13 @@ async function renderHome() {
 
         let inProgressItems = [];
         let upcomingItems = [];
-        let historyPool = []; // Contenitore cronologia globale
+        let historyPool = []; 
 
         const todayObj = new Date();
         const today = todayObj.toISOString().split('T')[0];
         
         const limitObj = new Date();
-        limitObj.setDate(todayObj.getDate() + 30); // Finestra visiva stretta a 30 giorni
+        limitObj.setDate(todayObj.getDate() + 30); 
         const maxDate = limitObj.toISOString().split('T')[0];
 
         for (const key of keys) {
@@ -307,7 +307,7 @@ async function renderHome() {
             // --- 1. ESTRAZIONE CRONOLOGIA GLOBALE (Passiva) ---
             if (userSeries.progress && tmdbData) {
                 for (const [epKey, timestamp] of Object.entries(userSeries.progress)) {
-                    if (epKey === 'MOVIE') continue; // Filtra i film, ci concentriamo sugli episodi
+                    if (epKey === 'MOVIE') continue; 
                     historyPool.push({
                         tvId: key,
                         epKey: epKey,
@@ -343,6 +343,29 @@ async function renderHome() {
                     }
                 }
             }
+
+            // CALCOLO EPISODI MANCANTI IN TEMPO REALE
+            let expectedEpisodes = 0;
+            let watchedTvEpisodes = 0;
+
+            for (const epK in userSeries.progress) {
+                if (epK !== 'MOVIE') watchedTvEpisodes++;
+            }
+
+            for (const [sNum, sData] of Object.entries(tmdbData.detailed_seasons)) {
+                if (sData.episodes) {
+                    for (const ep of sData.episodes) {
+                        const epKey = `S${String(sNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                        if ((ep.air_date && ep.air_date <= today) || userSeries.progress[epKey]) {
+                            expectedEpisodes++;
+                        }
+                    }
+                }
+            }
+
+            let remainingText = expectedEpisodes > watchedTvEpisodes
+                ? `<strong style="color: var(--text);">${watchedTvEpisodes} / ${expectedEpisodes}</strong> <span style="font-size:0.6rem;">EP.</span>` 
+                : `<strong style="color: var(--success);">IN PARI</strong>`;
 
             if (maxS > 0) {
                 const currentSeasonData = tmdbData.detailed_seasons[maxS];
@@ -437,8 +460,13 @@ async function renderHome() {
                                             ${targetEpisode.key}
                                         </span>
                                     </div>
-                                    <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.2rem;">
-                                        ${targetEpisode.name}
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.2rem; gap: 0.5rem;">
+                                        <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                            ${targetEpisode.name}
+                                        </div>
+                                        <div style="font-size: 0.65rem; color: var(--text-muted); font-weight: 700; flex-shrink: 0; text-transform: uppercase;">
+                                            ${remainingText}
+                                        </div>
                                     </div>
                                 </div>
                                 <div style="display: flex; gap: 0.5rem; margin-top: auto;" onclick="event.stopPropagation()">
@@ -461,7 +489,6 @@ async function renderHome() {
         inProgressItems.sort((a, b) => b.lastInteraction - a.lastInteraction);
         upcomingItems.sort((a, b) => a.dateTimestamp - b.dateTimestamp);
         
-        // Elaborazione Array Cronologia
         historyPool.sort((a, b) => b.timestamp - a.timestamp);
         const recentHistory = historyPool.slice(0, 30);
 
@@ -513,7 +540,6 @@ async function renderHome() {
             `;
         }
 
-        // AGGIUNTA WIDGET CRONOLOGIA (Con limite 7 ed espansione)
         if (recentHistory.length > 0) {
             let historyHTML = `
                 <div style="margin-top: 2.5rem;">
@@ -663,20 +689,50 @@ function createSeriesCardElement(item) {
     
     let statusLabel = '';
     let statusColor = 'var(--text-muted)';
+    let barColor = 'transparent';
+    let progressPct = 0;
     
-    if (item.user.status === 'completed') { statusLabel = isMovie ? 'VISTO' : 'COMPLETATA'; statusColor = 'var(--success)'; }
-    else if (item.user.status === 'paused') { statusLabel = 'IN PAUSA'; statusColor = 'var(--text)'; }
-    else if (item.user.status === 'planned' || item.user.watched_count === 0) { statusLabel = 'DA VEDERE'; }
-    else { statusLabel = 'IN CORSO'; statusColor = 'var(--primary)'; }
+    if (item.user.status === 'completed') { 
+        statusLabel = isMovie ? 'VISTO' : 'COMPLETATA'; 
+        statusColor = 'var(--success)'; 
+        barColor = 'var(--success)';
+        progressPct = 100;
+    } else if (item.user.status === 'paused') { 
+        statusLabel = 'IN PAUSA'; 
+        statusColor = 'var(--text)'; 
+        barColor = 'var(--text-muted)'; // Il grigio sussurra che l'azione è interrotta
+    } else if (item.user.status === 'planned' || item.user.watched_count === 0) { 
+        statusLabel = 'DA VEDERE'; 
+        barColor = 'transparent';
+    } else { 
+        statusLabel = 'IN CORSO'; 
+        statusColor = 'var(--primary)'; 
+        barColor = 'var(--primary)'; // Il colore primario indica attività
+    }
+
+    // Calcolo istantaneo del progresso a costo computazionale vicino allo zero
+    if (!isMovie && item.user.status !== 'planned' && item.user.watched_count > 0 && item.user.status !== 'completed') {
+        const totalEps = item.tmdb.number_of_episodes || 1; 
+        progressPct = Math.min(100, Math.round((item.user.watched_count / totalEps) * 100));
+    }
 
     const favBadge = item.user.is_favorite ? `<div style="position: absolute; top: 5px; right: 5px; background: var(--card-bg); border-radius: 50%; padding: 4px; border: 1px solid var(--danger); color: var(--danger); line-height: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg></div>` : '';
     
-    // LOGICA BADGE DINAMICO
     const badgeBg = isMovie ? 'var(--danger)' : 'var(--text)';
     const badgeColor = isMovie ? '#ffffff' : 'var(--bg)';
     const badgeText = isMovie ? 'FILM' : 'SERIE';
     
-    const typeBadge = `<div style="position: absolute; top: 5px; left: 5px; background: ${badgeBg}; color: ${badgeColor}; font-size: 0.6rem; font-weight: 900; padding: 0.15rem 0.35rem; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(0,0,0,0.5);">${badgeText}</div>`;
+    const typeBadge = `<div style="position: absolute; top: 5px; left: 5px; background: ${badgeBg}; color: ${badgeColor}; font-size: 0.6rem; font-weight: 900; padding: 0.15rem 0.35rem; border-radius: 3px; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); z-index: 2;">${badgeText}</div>`;
+
+    // Iniezione della barra UI
+    let progressBarHTML = '';
+    if (!isMovie && (progressPct > 0 || item.user.status === 'completed')) {
+        progressBarHTML = `
+            <div style="width: 100%; height: 4px; background: var(--border); margin-top: 0.5rem; border-radius: 2px; overflow: hidden;">
+                <div style="width: ${progressPct}%; height: 100%; background: ${barColor}; transition: width 0.3s ease;"></div>
+            </div>
+        `;
+    }
 
     const card = document.createElement('div');
     card.className = 'series-card';
@@ -693,6 +749,7 @@ function createSeriesCardElement(item) {
         <div class="series-card-content">
             <span class="series-title" title="${title}">${title}</span>
             <span class="series-status" style="color: ${statusColor};">${statusLabel}</span>
+            ${progressBarHTML}
         </div>
     `;
     return card;
@@ -1084,7 +1141,7 @@ async function openDetailView(mediaId) {
 
         let bannerHTML = bannerUrl ? `<div style="width: 100%; height: 160px; border: 1.5px solid var(--text); background: url('${bannerUrl}') center/cover; margin-bottom: 1.5rem; display: block;"></div>` : '';
 
-        // ESTRAZIONE DATI AGGIUNTIVI (PROVIDERS, TRAILER, CAST)
+        // ESTRAZIONE PROVIDER
         let providersHTML = '';
         if (tmdbData['watch/providers']?.results?.IT) {
             const itData = tmdbData['watch/providers'].results.IT;
@@ -1102,49 +1159,7 @@ async function openDetailView(mediaId) {
             }
         }
 
-        // ==========================================
-        // ACTION BAR UNIFICATA (Aggiungi, Trailer, Aggiorna, Elimina)
-        // ==========================================
-        let actionButtons = '';
-        
-        if (isPreview) {
-            actionButtons += `
-                <button class="btn btn-success btn-small" style="font-weight: 800; display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 1rem;" onclick="addToLibraryFromPreview(${mediaId})">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    AGGIUNGI
-                </button>
-            `;
-        }
-
-        if (tmdbData.videos?.results) {
-            const trailer = tmdbData.videos.results.find(v => v.site === 'YouTube' && (v.type === 'Trailer' || v.type === 'Teaser'));
-            if (trailer) {
-                actionButtons += `
-                    <a href="https://www.youtube.com/watch?v=${trailer.key}" target="_blank" class="btn btn-outline btn-small" style="display: inline-flex; align-items: center; gap: 0.4rem; border-color: var(--danger); color: var(--danger); text-decoration: none;">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        Trailer
-                    </a>
-                `;
-            }
-        }
-
-        // Se l'opera è tracciata, mostra i comandi di amministrazione
-        if (!isPreview) {
-            actionButtons += `
-                <button class="btn btn-outline btn-small" style="display: inline-flex; align-items: center; gap: 0.4rem;" onclick="forceUpdateMetadata(${mediaId})" title="Forza il download dei nuovi dati da TMDB">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
-                    Aggiorna
-                </button>
-                <button class="btn btn-outline btn-small" style="display: inline-flex; align-items: center; gap: 0.4rem; border-color: var(--danger); color: var(--danger);" onclick="removeSeries(${mediaId})" title="Rimuovi dalla libreria">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                    Elimina
-                </button>
-            `;
-        }
-
-        let actionBarHTML = actionButtons ? `<div style="display: flex; gap: 0.75rem; margin-bottom: 1.5rem; flex-wrap: wrap;">${actionButtons}</div>` : '';
-
-
+        // ESTRAZIONE CAST
         let castHTML = '';
         if (tmdbData.credits?.cast) {
             const topCast = tmdbData.credits.cast.slice(0, 6);
@@ -1166,6 +1181,235 @@ async function openDetailView(mediaId) {
             }
         }
 
+        // INFO USCITA (Solo Film)
+        let releaseInfoHTML = '';
+        if (isMovie) {
+             const releaseDate = tmdbData.release_date ? tmdbData.release_date.split('-').reverse().join('/') : 'TBA';
+             const runtime = tmdbData.runtime ? `${tmdbData.runtime} min` : 'N/D';
+             releaseInfoHTML = `
+                <div style="display: flex; gap: 0.75rem; font-size: 0.75rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; margin-top: 0.2rem; margin-bottom: 1.5rem;">
+                    <span>Uscita: <strong style="color: var(--text);">${releaseDate}</strong></span>
+                    <span style="color: var(--border);">|</span>
+                    <span>Durata: <strong style="color: var(--text);">${runtime}</strong></span>
+                </div>
+             `;
+        }
+
+        // ==========================================
+        // 1. BLOCCO AZIONI PRIMARIE (Elastico e Adattivo)
+        // ==========================================
+        let primaryButtons = '';
+        const primaryBtnStyle = "flex: 1 1 110px; justify-content: center; padding: 0.6rem; font-weight: 800;";
+
+        if (isPreview) {
+            primaryButtons += `
+                <button class="btn btn-success" style="${primaryBtnStyle}" onclick="addToLibraryFromPreview(${mediaId})">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    AGGIUNGI
+                </button>
+            `;
+        }
+
+        if (tmdbData.videos?.results) {
+            const trailer = tmdbData.videos.results.find(v => v.site === 'YouTube' && (v.type === 'Trailer' || v.type === 'Teaser'));
+            if (trailer) {
+                primaryButtons += `
+                    <a href="https://www.youtube.com/watch?v=${trailer.key}" target="_blank" class="btn btn-outline" style="${primaryBtnStyle} border-color: var(--danger); color: var(--danger); text-decoration: none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        TRAILER
+                    </a>
+                `;
+            }
+        }
+
+        if (!isPreview && isMovie) {
+            const isWatched = userSeries.status === 'completed';
+            if (isWatched) {
+                primaryButtons += `
+                    <button class="btn btn-outline" style="${primaryBtnStyle} border-color: var(--border); color: var(--text-muted);" onclick="toggleMovieWatched(${mediaId})" title="Rimuovi la spunta di visione">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        ANNULLA
+                    </button>
+                    <button class="btn btn-outline" style="${primaryBtnStyle} border-color: var(--primary); color: var(--primary);" onclick="rewatchMovie(${mediaId})" title="Segna un'altra visione">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                        RIVISTO
+                    </button>
+                `;
+            } else {
+                primaryButtons += `
+                    <button class="btn btn-outline" style="${primaryBtnStyle} border-color: var(--success); color: var(--success);" onclick="toggleMovieWatched(${mediaId})">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        SEGNA VISTO
+                    </button>
+                `;
+            }
+        }
+
+        let primaryActionsHTML = primaryButtons ? `<div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; width: 100%; flex-wrap: wrap;">${primaryButtons}</div>` : '';
+
+        // ==========================================
+        // 2. BARRA DEGLI STRUMENTI (Amministrazione)
+        // ==========================================
+        let adminBarHTML = '';
+
+        if (!isPreview) {
+            const isFav = userSeries.is_favorite === true;
+            
+            const utilityButtons = `
+                <button class="btn btn-outline" style="width: 38px; height: 38px; padding: 0; display: flex; justify-content: center; align-items: center; border-radius: 6px; border-color: ${isFav ? 'var(--danger)' : 'var(--border)'}; color: ${isFav ? 'var(--danger)' : 'var(--text-muted)'}; background: var(--card-bg);" onclick="toggleFavorite(${mediaId})" title="Preferito">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                </button>
+                <button class="btn btn-outline" style="width: 38px; height: 38px; padding: 0; display: flex; justify-content: center; align-items: center; border-radius: 6px; border-color: var(--border); color: var(--text-muted); background: var(--card-bg);" onclick="forceUpdateMetadata(${mediaId})" title="Forza aggiornamento TMDB">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                </button>
+                <button class="btn btn-outline" style="width: 38px; height: 38px; padding: 0; display: flex; justify-content: center; align-items: center; border-radius: 6px; border-color: var(--danger); color: var(--danger); background: var(--card-bg);" onclick="removeSeries(${mediaId})" title="Elimina opera">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+            `;
+
+            if (isMovie) {
+                if (userSeries.status === 'completed') {
+                    // Film Visto: Mostra statistiche ed icone ben impaginate
+                    if (!userSeries.rewatches) userSeries.rewatches = {};
+                    const totalViews = 1 + (userSeries.rewatches['MOVIE'] || 0);
+                    let lastStr = 'N/D';
+                    if (userSeries.progress['MOVIE']) {
+                        const d = new Date(userSeries.progress['MOVIE']);
+                        lastStr = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}/${d.getFullYear()}`;
+                    }
+                    adminBarHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; background: var(--input-bg); padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1.5rem;">
+                            <div style="display: flex; gap: 1rem; align-items: center;">
+                                <div style="display: flex; flex-direction: column; line-height: 1.2;">
+                                    <span style="font-size: 0.6rem; color: var(--text-muted); font-weight: 800; text-transform: uppercase;">Ultima Visione</span>
+                                    <strong style="color: var(--text); font-size: 0.85rem;">${lastStr}</strong>
+                                </div>
+                                <div style="width: 1px; background: var(--border); height: 24px;"></div>
+                                <div style="display: flex; flex-direction: column; line-height: 1.2; text-align: center;">
+                                    <span style="font-size: 0.6rem; color: var(--text-muted); font-weight: 800; text-transform: uppercase;">Volte</span>
+                                    <strong style="color: var(--text); font-size: 0.85rem;">${totalViews}</strong>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 0.4rem; flex-shrink: 0;">${utilityButtons}</div>
+                        </div>
+                    `;
+                } else {
+                    // Film Non Visto: Niente box, niente cartelli. Solo le icone utility a destra.
+                    adminBarHTML = `
+                        <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 1.5rem; gap: 0.4rem;">
+                            ${utilityButtons}
+                        </div>
+                    `;
+                }
+            } else {
+                // Serie TV: Menu a tendina coerente con lo stato sfumato
+                const currentStatus = userSeries.status || 'watching';
+                const statusOptions = `
+                   <option value="watching" ${currentStatus === 'watching' ? 'selected' : ''}>In Corso / Da Vedere</option>
+                   <option value="paused" ${currentStatus === 'paused' ? 'selected' : ''}>In Pausa</option>
+                   <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Completata</option>
+                `;
+
+                adminBarHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; background: var(--input-bg); padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1.5rem; gap: 0.5rem;">
+                        <select id="status-select-${mediaId}" onchange="changeSeriesStatus(${mediaId}, this.value)" style="flex: 1; padding: 0.45rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-weight: 800; text-transform: uppercase; font-size: 0.75rem; outline: none; cursor: pointer; min-width: 0;">
+                            ${statusOptions}
+                        </select>
+                        <div style="display: flex; gap: 0.4rem; flex-shrink: 0;">${utilityButtons}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // ==========================================
+        // ASSEMBLAGGIO FINALE DEL DOM
+        // ==========================================
+        let html = `
+            ${bannerHTML}
+            <h2 style="margin: 0 0 ${isMovie ? '0' : '0.5rem'} 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${title}</h2>
+            ${releaseInfoHTML}
+            ${primaryActionsHTML}
+            ${adminBarHTML}
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.5;">${tmdbData.overview || 'Nessuna sinossi disponibile.'}</p>
+            ${providersHTML}
+            ${castHTML}
+        `;
+        
+        // MOTORE DI RENDERING STAGIONI (Solo Serie TV Tracciate)
+        if (!isPreview && !isMovie) {
+            if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
+                html += `
+                    <div class="card" style="border-color: var(--danger); display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
+                        <div style="width: 24px; height: 24px; border: 3px solid var(--danger); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>
+                        <p style="color: var(--danger); font-weight: 800; margin:0; font-size: 0.95rem; line-height: 1.3;">Sincronizzazione in corso...<br><span style="font-size: 0.8rem; font-weight: 600; opacity: 0.8;">Attendi qualche secondo.</span></p>
+                    </div>
+                `;
+            } else {
+                const today = new Date().toISOString().split('T')[0];
+                for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
+                    const bodyId = `season-body-${mediaId}-${seasonNum}`;
+                    let watchedEpsInSeason = 0;
+                    const totalSeasonEps = seasonData.episodes ? seasonData.episodes.length : 0;
+
+                    if (seasonData.episodes) {
+                        for (const ep of seasonData.episodes) {
+                            const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                            if (userSeries.progress && userSeries.progress[epKey]) watchedEpsInSeason++;
+                        }
+                    }
+
+                    const isSeasonCompleted = totalSeasonEps > 0 && watchedEpsInSeason >= totalSeasonEps;
+                    
+                    html += `
+                        <div style="border: 1.5px solid var(--text); border-left: 8px solid ${isSeasonCompleted ? 'var(--success)' : 'var(--primary)'}; background: var(--card-bg); margin-bottom: 1rem; opacity: ${isSeasonCompleted ? '0.6' : '1'};">
+                            <div onclick="toggleSeasonPanel(${mediaId}, ${seasonNum}, '${bodyId}')" style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
+                                <div>
+                                    <strong style="font-size: 1.2rem; text-transform: uppercase; display: block; color: ${isSeasonCompleted ? 'var(--text-muted)' : 'var(--text)'};">Stagione ${seasonNum}</strong>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">${watchedEpsInSeason}/${totalSeasonEps} EPISODI</div>
+                                </div>
+                                ${isSeasonCompleted ? `<span style="font-size: 0.8rem; font-weight: 900; color: var(--success);">✓ COMPLETATA</span>` : `<button class="btn btn-outline btn-small" style="font-size: 0.7rem; font-weight: 800;" onclick="event.stopPropagation(); markSeasonWatched(${mediaId}, ${seasonNum})">COMPLETA STAGIONE</button>`}
+                            </div>
+                            <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
+                    `;
+                    
+                    if (seasonData.episodes && seasonData.episodes.length > 0) {
+                        let firstUnwatchedFound = false;
+                        seasonData.episodes.forEach((ep, i) => {
+                            const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+                            const isWatched = userSeries.progress && userSeries.progress[epKey];
+                            const isFuture = ep.air_date && ep.air_date > today;
+                            const dateStr = ep.air_date ? ep.air_date.split('-').reverse().join('/') : "TBA";
+                            
+                            let rowIdAttr = '';
+                            if (!isWatched && !firstUnwatchedFound && !isFuture) {
+                                rowIdAttr = `id="first-unwatched-${mediaId}-${seasonNum}"`;
+                                firstUnwatchedFound = true;
+                            }
+
+                            let actionBtnHTML = isFuture && !isWatched 
+                                ? `<button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; opacity: 0.4; border-radius: 50%;" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></button>`
+                                : (isWatched ? `<button class="btn btn-success" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; border-radius: 50%;" onclick="event.stopPropagation(); toggleEpisode(${mediaId}, '${epKey}')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>` : `<button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; border-radius: 50%; color: var(--text-muted);" onclick="event.stopPropagation(); toggleEpisode(${mediaId}, '${epKey}')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg></button>`);
+
+                            html += `
+                                <div ${rowIdAttr} style="display: flex; gap: 0.75rem; align-items: center; padding: 1rem 0; ${i === seasonData.episodes.length - 1 ? '' : 'border-bottom: 1px solid var(--border);'} opacity: ${isWatched ? '0.5' : '1'}; cursor: pointer;" onclick="openEpisodeDetails(${mediaId}, ${seasonNum}, ${ep.episode_number})">
+                                    <img src="${ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : 'https://placehold.co/300x170/27272a/a1a1aa?text=TBA'}" style="width: 100px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; filter: ${isWatched ? 'grayscale(100%)' : 'none'};">
+                                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
+                                        <span style="display: block; font-size: 0.95rem; font-weight: 800; color: ${isWatched ? 'var(--text-muted)' : 'var(--text)'}; text-decoration: ${isWatched ? 'line-through' : 'none'}; line-height: 1.2; margin-bottom: 0.3rem;"><span style="color: var(--text-muted); margin-right: 0.1rem;">${ep.episode_number}.</span> ${ep.name}</span>
+                                        <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">${dateStr}</span>
+                                    </div>
+                                    <div style="flex-shrink: 0; padding-left: 0.5rem;">${actionBtnHTML}</div>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio.</div>`;
+                    }
+                    html += `</div></div>`;
+                }
+            }
+        }
+        
+        // RACCOMANDAZIONI
         let recommendationsHTML = '';
         try {
             const recRes = await fetch(`${TMDB_CONFIG.BASE_URL}/${mediaType}/${mediaId}/recommendations?api_key=${TMDB_CONFIG.API_KEY}&language=it-IT`);
@@ -1177,163 +1421,6 @@ async function openDetailView(mediaId) {
             }
         } catch (e) {
             console.warn("[SYS] Radar offline per titoli simili.");
-        }
-
-        // ASSEMBLAGGIO FINALE UI BASE
-        let html = `
-            ${bannerHTML}
-            <h2 style="margin: 0 0 0.75rem 0; text-transform: uppercase; font-weight: 900; letter-spacing: -0.5px; font-size: 1.8rem; line-height: 1.1;">${title}</h2>
-            ${actionBarHTML}
-            
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.5;">${tmdbData.overview || 'Nessuna sinossi disponibile.'}</p>
-            ${providersHTML}
-            ${castHTML}
-        `;
-        
-        // GESTIONE TITOLI GIA' TRACCIATI
-        if (!isPreview) {
-            const isFav = userSeries.is_favorite === true;
-            const currentStatus = userSeries.status || (isMovie ? 'planned' : 'watching');
-            const statusOptions = isMovie 
-                ? `<option value="planned" ${currentStatus === 'planned' || currentStatus === 'watching' ? 'selected' : ''}>Da Vedere</option>
-                   <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Visto</option>`
-                : `<option value="watching" ${currentStatus === 'watching' ? 'selected' : ''}>In Corso / Da Vedere</option>
-                   <option value="paused" ${currentStatus === 'paused' ? 'selected' : ''}>In Pausa</option>
-                   <option value="completed" ${currentStatus === 'completed' ? 'selected' : ''}>Completata</option>`;
-
-            html += `
-                <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; background: var(--input-bg); padding: 0.75rem; border: 1.5px solid var(--text);">
-                    <select id="status-select-${mediaId}" onchange="changeSeriesStatus(${mediaId}, this.value)" style="flex: 1; padding: 0.5rem; background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-weight: 700; text-transform: uppercase; font-size: 0.8rem; outline: none;">
-                        ${statusOptions}
-                    </select>
-                    <button onclick="toggleFavorite(${mediaId})" class="btn btn-outline" style="padding: 0.5rem 1rem; color: ${isFav ? 'var(--danger)' : 'var(--text-muted)'}; border-color: ${isFav ? 'var(--danger)' : 'var(--border)'};">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                    </button>
-                </div>
-            `;
-
-            if (isMovie) {
-                const isWatched = userSeries.status === 'completed';
-                
-                if (!userSeries.rewatches) userSeries.rewatches = {};
-                const rewatches = userSeries.rewatches['MOVIE'] || 0;
-                const totalViews = isWatched ? 1 + rewatches : 0;
-                let lastWatchedStr = 'Mai visto';
-                
-                if (isWatched && userSeries.progress['MOVIE']) {
-                    const d = new Date(userSeries.progress['MOVIE']);
-                    lastWatchedStr = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}/${d.getFullYear()}`;
-                }
-
-                let movieActionHTML = '';
-                if (isWatched) {
-                    movieActionHTML = `
-                        <div style="display: flex; justify-content: space-between; background: var(--bg); padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted);">
-                            <span>Ultima: <strong style="color: var(--text);">${lastWatchedStr}</strong></span>
-                            <span>Visioni: <strong style="color: var(--text);">${totalViews}</strong></span>
-                        </div>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <button class="btn btn-outline" style="flex: 1; border-color: var(--border); color: var(--text-muted); font-size: 0.75rem; font-weight: 800; padding: 0.4rem; border-radius: 20px; transition: all 0.2s;" onclick="toggleMovieWatched(${mediaId})">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.3rem;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                ANNULLA
-                            </button>
-                            <button class="btn btn-outline" style="flex: 1; border-color: var(--primary); color: var(--primary); font-size: 0.75rem; font-weight: 800; padding: 0.4rem; border-radius: 20px; transition: all 0.2s;" onclick="rewatchMovie(${mediaId})">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.3rem;"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
-                                RIVISTO
-                            </button>
-                        </div>
-                    `;
-                } else {
-                    movieActionHTML = `
-                        <button class="btn btn-outline" style="width: 100%; border-color: var(--success); color: var(--success); font-size: 0.75rem; font-weight: 800; padding: 0.4rem; border-radius: 20px; transition: all 0.2s; justify-content: center;" onclick="toggleMovieWatched(${mediaId})">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.4rem;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 8 12 12 15 15"></polyline></svg>
-                            SEGNA COME VISTO
-                        </button>
-                    `;
-                }
-
-                html += `
-                    <div style="border-top: 1.5px solid var(--border); border-bottom: 1.5px solid var(--border); padding: 1rem 0; margin-bottom: 1.5rem;">
-                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
-                            <span style="font-size: 0.7rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Uscita: <span style="color: var(--text);">${tmdbData.release_date ? tmdbData.release_date.split('-').reverse().join('/') : 'TBA'}</span></span>
-                            <span style="color: var(--border);">|</span>
-                            <span style="font-size: 0.7rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Durata: <span style="color: var(--text);">${tmdbData.runtime ? `${tmdbData.runtime} min` : 'N/D'}</span></span>
-                        </div>
-                        ${movieActionHTML}
-                    </div>
-                `;
-            } else {
-                if (!tmdbData.detailed_seasons || Object.keys(tmdbData.detailed_seasons).length === 0) {
-                    html += `
-                        <div class="card" style="border-color: var(--danger); display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
-                            <div style="width: 24px; height: 24px; border: 3px solid var(--danger); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>
-                            <p style="color: var(--danger); font-weight: 800; margin:0; font-size: 0.95rem; line-height: 1.3;">Sincronizzazione in corso...<br><span style="font-size: 0.8rem; font-weight: 600; opacity: 0.8;">Attendi qualche secondo.</span></p>
-                        </div>
-                    `;
-                } else {
-                    const today = new Date().toISOString().split('T')[0];
-                    for (const [seasonNum, seasonData] of Object.entries(tmdbData.detailed_seasons)) {
-                        const bodyId = `season-body-${mediaId}-${seasonNum}`;
-                        let watchedEpsInSeason = 0;
-                        const totalSeasonEps = seasonData.episodes ? seasonData.episodes.length : 0;
-
-                        if (seasonData.episodes) {
-                            for (const ep of seasonData.episodes) {
-                                const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                                if (userSeries.progress && userSeries.progress[epKey]) watchedEpsInSeason++;
-                            }
-                        }
-
-                        const isSeasonCompleted = totalSeasonEps > 0 && watchedEpsInSeason >= totalSeasonEps;
-                        
-                        html += `
-                            <div style="border: 1.5px solid var(--text); border-left: 8px solid ${isSeasonCompleted ? 'var(--success)' : 'var(--primary)'}; background: var(--card-bg); margin-bottom: 1rem; opacity: ${isSeasonCompleted ? '0.6' : '1'};">
-                                <div onclick="toggleSeasonPanel(${mediaId}, ${seasonNum}, '${bodyId}')" style="padding: 1.25rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
-                                    <div>
-                                        <strong style="font-size: 1.2rem; text-transform: uppercase; display: block; color: ${isSeasonCompleted ? 'var(--text-muted)' : 'var(--text)'};">Stagione ${seasonNum}</strong>
-                                        <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; margin-top: 0.3rem;">${watchedEpsInSeason}/${totalSeasonEps} EPISODI</div>
-                                    </div>
-                                    ${isSeasonCompleted ? `<span style="font-size: 0.8rem; font-weight: 900; color: var(--success);">✓ COMPLETATA</span>` : `<button class="btn btn-outline btn-small" style="font-size: 0.7rem; font-weight: 800;" onclick="event.stopPropagation(); markSeasonWatched(${mediaId}, ${seasonNum})">COMPLETA STAGIONE</button>`}
-                                </div>
-                                <div id="${bodyId}" style="display: none; border-top: 1.5px solid var(--text); padding: 0 1.25rem;">
-                        `;
-                        
-                        if (seasonData.episodes && seasonData.episodes.length > 0) {
-                            let firstUnwatchedFound = false;
-                            seasonData.episodes.forEach((ep, i) => {
-                                const epKey = `S${String(seasonNum).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
-                                const isWatched = userSeries.progress && userSeries.progress[epKey];
-                                const isFuture = ep.air_date && ep.air_date > today;
-                                const dateStr = ep.air_date ? ep.air_date.split('-').reverse().join('/') : "TBA";
-                                
-                                let rowIdAttr = '';
-                                if (!isWatched && !firstUnwatchedFound && !isFuture) {
-                                    rowIdAttr = `id="first-unwatched-${mediaId}-${seasonNum}"`;
-                                    firstUnwatchedFound = true;
-                                }
-
-                                let actionBtnHTML = isFuture && !isWatched 
-                                    ? `<button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; opacity: 0.4; border-radius: 50%;" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></button>`
-                                    : (isWatched ? `<button class="btn btn-success" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; border-radius: 50%;" onclick="event.stopPropagation(); toggleEpisode(${mediaId}, '${epKey}')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>` : `<button class="btn btn-outline" style="width: 36px; height: 36px; padding: 0; flex-shrink: 0; border-radius: 50%; color: var(--text-muted);" onclick="event.stopPropagation(); toggleEpisode(${mediaId}, '${epKey}')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg></button>`);
-
-                                html += `
-                                    <div ${rowIdAttr} style="display: flex; gap: 0.75rem; align-items: center; padding: 1rem 0; ${i === seasonData.episodes.length - 1 ? '' : 'border-bottom: 1px solid var(--border);'} opacity: ${isWatched ? '0.5' : '1'}; cursor: pointer;" onclick="openEpisodeDetails(${mediaId}, ${seasonNum}, ${ep.episode_number})">
-                                        <img src="${ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : 'https://placehold.co/300x170/27272a/a1a1aa?text=TBA'}" style="width: 100px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex-shrink: 0; filter: ${isWatched ? 'grayscale(100%)' : 'none'};">
-                                        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0;">
-                                            <span style="display: block; font-size: 0.95rem; font-weight: 800; color: ${isWatched ? 'var(--text-muted)' : 'var(--text)'}; text-decoration: ${isWatched ? 'line-through' : 'none'}; line-height: 1.2; margin-bottom: 0.3rem;"><span style="color: var(--text-muted); margin-right: 0.1rem;">${ep.episode_number}.</span> ${ep.name}</span>
-                                            <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">${dateStr}</span>
-                                        </div>
-                                        <div style="flex-shrink: 0; padding-left: 0.5rem;">${actionBtnHTML}</div>
-                                    </div>
-                                `;
-                            });
-                        } else {
-                            html += `<div style="padding: 1.25rem 0; color: var(--text-muted);">Nessun episodio.</div>`;
-                        }
-                        html += `</div></div>`;
-                    }
-                }
-            }
         }
         
         html += recommendationsHTML; 
