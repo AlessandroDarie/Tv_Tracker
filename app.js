@@ -4,9 +4,10 @@
 
 let currentContext = 'home';
 let lastSearchQuery = '';
-let currentTvFilter = 'all';
+let currentTvFilter = 'watching';
 let currentMovieFilter = 'all';
 let activeLibraryTab = 'tv';
+let currentLibrarySort = 'recent';
 
 // Motore di switch per le schede principali della Libreria
 function switchLibraryTab(tab) {
@@ -40,6 +41,12 @@ function setLibraryFilter(mediaType, filterValue) {
     if (mediaType === 'tv') currentTvFilter = filterValue;
     if (mediaType === 'movie') currentMovieFilter = filterValue;
     renderLibrary(); // Ricarica la vista applicando le nuove memorie
+}
+
+// Gestore dell'ordinamento
+function setLibrarySort(sortValue) {
+    currentLibrarySort = sortValue;
+    renderLibrary();
 }
 
 // Motore di Debounce: blocca le raffiche di chiamate API
@@ -780,12 +787,12 @@ async function renderLibrary() {
         let seriesArray = [];
         let movieArray = [];
 
-        // ESTRAZIONE MASSIVA E SMISTAMENTO ALLA RADICE
+        // ESTRAZIONE MASSIVA
         for (const key of keys) {
             const userItem = await UserLibrary.getItem(key);
             let tmdbData = await TmdbCache.getItem(key);
             
-            if (!tmdbData) continue; // Ignora i falliti di cache, ci pensa l'updater in background
+            if (!tmdbData) continue; 
 
             const isMovie = tmdbData.media_type === 'movie' || userItem.media_type === 'movie';
             const itemData = { key: key, user: userItem, tmdb: tmdbData, lastInteraction: getLastInteraction(userItem) };
@@ -799,94 +806,65 @@ async function renderLibrary() {
             }
         }
 
-        // Ordinamento cronologico assoluto per entrambi i silos
-        seriesArray.sort((a, b) => b.lastInteraction - a.lastInteraction);
-        movieArray.sort((a, b) => b.lastInteraction - a.lastInteraction);
-
-        tvGrid.innerHTML = '';
-        movieGrid.innerHTML = '';
-
-        // MOTORE DI RENDERING SEZIONI INTERNO
-        const buildSection = (array, currentFilter, container, typeConfig) => {
-            const filterLogic = (type) => array.filter(item => {
-                const eps = item.user.watched_count || 0;
-                switch(type) {
-                    case 'watching': return item.user.status === 'watching' && eps > 0;
-                    case 'planned': return (item.user.status === 'watching' && eps === 0) || item.user.status === 'planned';
-                    case 'paused': return item.user.status === 'paused';
-                    case 'completed': return item.user.status === 'completed';
-                    case 'favorite': return item.user.is_favorite === true;
-                    default: return true;
-                }
-            });
-
-            if (array.length === 0) {
-                container.innerHTML = '<span style="color: var(--text-muted); display: block; padding: 1rem 0;">Nessun titolo salvato in questa sezione.</span>';
-                return;
-            }
-
-            if (currentFilter === 'all') {
-                let hasContent = false;
-                typeConfig.forEach(cat => {
-                    const catItems = filterLogic(cat.id);
-                    if (catItems.length === 0) return;
-                    hasContent = true;
-
-                    const headerColor = cat.color || 'var(--text)';
-                    const sectionDiv = document.createElement('div');
-                    
-                    sectionDiv.innerHTML = `
-                        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: ${hasContent && container.innerHTML !== '' ? '2rem' : '0'}; margin-bottom: 1rem; border-bottom: 2px solid ${headerColor}; padding-bottom: 0.5rem;">
-                            <h3 style="margin: 0; text-transform: uppercase; font-weight: 900; color: ${headerColor}; letter-spacing: -0.5px; font-size: 1.1rem;">${cat.title}</h3>
-                            ${catItems.length > 6 ? `<button class="btn btn-outline btn-small" style="font-weight: 800; border-color: ${headerColor}; color: ${headerColor}; padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setLibraryFilter('${typeConfig[0].mediaType}', '${cat.id}')">Vedi Tutte (${catItems.length})</button>` : ''}
-                        </div>
-                    `;
-                    const subGrid = document.createElement('div');
-                    subGrid.className = 'library-grid';
-                    
-                    catItems.slice(0, 6).forEach(item => subGrid.appendChild(createSeriesCardElement(item)));
-                    
-                    sectionDiv.appendChild(subGrid);
-                    container.appendChild(sectionDiv);
+        // MOTORE DI ORDINAMENTO ASSOLUTO
+        const applySorting = (array) => {
+            if (currentLibrarySort === 'recent') {
+                array.sort((a, b) => b.lastInteraction - a.lastInteraction);
+            } else if (currentLibrarySort === 'added') {
+                array.sort((a, b) => (b.user.added_at || 0) - (a.user.added_at || 0));
+            } else if (currentLibrarySort === 'az') {
+                array.sort((a, b) => {
+                    const titleA = a.tmdb.title || a.tmdb.name || "";
+                    const titleB = b.tmdb.title || b.tmdb.name || "";
+                    return titleA.localeCompare(titleB);
                 });
-
-                if (!hasContent) container.innerHTML = '<span style="color: var(--text-muted); display: block; padding: 1rem 0;">La tua lista è completamente vuota.</span>';
-
-            } else {
-                const targetItems = filterLogic(currentFilter);
-                if (targetItems.length === 0) {
-                    container.innerHTML = `<span style="color: var(--text-muted); display: block; padding: 1rem 0;">Nessun titolo in questa categoria.</span>`;
-                    return;
-                }
-                const grid = document.createElement('div');
-                grid.className = 'library-grid';
-                targetItems.forEach(item => grid.appendChild(createSeriesCardElement(item)));
-                container.appendChild(grid);
             }
         };
 
-        // Configurazioni logiche per le categorie
-        const tvConfig = [
-            { id: 'watching', title: 'In Corso', mediaType: 'tv' },
-            { id: 'planned', title: 'Da Vedere', mediaType: 'tv' },
-            { id: 'paused', title: 'In Pausa', mediaType: 'tv' },
-            { id: 'completed', title: 'Viste', mediaType: 'tv' },
-            { id: 'favorite', title: 'Preferite', color: 'var(--danger)', mediaType: 'tv' }
-        ];
+        applySorting(seriesArray);
+        applySorting(movieArray);
 
-        const movieConfig = [
-            { id: 'planned', title: 'Da Vedere', mediaType: 'movie' },
-            { id: 'completed', title: 'Visti', mediaType: 'movie' },
-            { id: 'favorite', title: 'Preferiti', color: 'var(--danger)', mediaType: 'movie' }
-        ];
+        // MOTORE DI FILTRAGGIO ASSOLUTO
+        const filterLogic = (item, type, filterStr) => {
+            if (filterStr === 'favorite') return item.user.is_favorite === true;
+            if (type === 'tv') {
+                const eps = item.user.watched_count || 0;
+                if (filterStr === 'all') return true;
+                if (filterStr === 'watching') return item.user.status === 'watching' && eps > 0;
+                if (filterStr === 'planned') return (item.user.status === 'watching' && eps === 0) || item.user.status === 'planned';
+                if (filterStr === 'paused') return item.user.status === 'paused';
+                if (filterStr === 'completed') return item.user.status === 'completed';
+            } else {
+                if (filterStr === 'all') return true;
+                if (filterStr === 'planned') return item.user.status === 'planned';
+                if (filterStr === 'completed') return item.user.status === 'completed';
+            }
+            return true;
+        };
 
-        // Esecuzione parallela
-        buildSection(seriesArray, currentTvFilter, tvGrid, tvConfig);
-        buildSection(movieArray, currentMovieFilter, movieGrid, movieConfig);
+        const filteredSeries = seriesArray.filter(item => filterLogic(item, 'tv', currentTvFilter));
+        const filteredMovies = movieArray.filter(item => filterLogic(item, 'movie', currentMovieFilter));
+
+        // RENDER PIATTO
+        const renderFlatGrid = (items, container) => {
+            if (items.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-muted); display: block; padding: 1rem 0;">Nessun titolo in questa categoria.</span>';
+                return;
+            }
+            const grid = document.createElement('div');
+            grid.className = 'library-grid';
+            items.forEach(item => grid.appendChild(createSeriesCardElement(item)));
+            container.innerHTML = '';
+            container.appendChild(grid);
+        };
+
+        renderFlatGrid(filteredSeries, tvGrid);
+        renderFlatGrid(filteredMovies, movieGrid);
 
     } catch (error) {
         console.error(error);
-        tvGrid.innerHTML = '<span style="color: var(--danger); display: block;">Errore critico durante la scansione del database.</span>';
+        tvGrid.innerHTML = '<span style="color: var(--danger); display: block;">Errore critico durante la scansione.</span>';
+        movieGrid.innerHTML = '<span style="color: var(--danger); display: block;">Errore critico durante la scansione.</span>';
     }
 }
 
@@ -2316,10 +2294,28 @@ function switchTab(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById(`view-${viewId}`).classList.add('active');
     
-    // Aggiornato: Punta alla nuova barra inferiore
-    document.querySelectorAll('.bottom-nav button').forEach(b => b.classList.remove('active'));
+    // Distruzione del piattume visivo: Contrasto Estremo
+    document.querySelectorAll('.bottom-nav button').forEach(btn => {
+        btn.classList.remove('active');
+        
+        // Spegnimento radicale dei tab inattivi
+        btn.style.color = 'var(--text-muted)';
+        btn.style.opacity = '0.35';
+        btn.style.transform = 'scale(0.95)';
+        btn.style.fontWeight = '600';
+        btn.style.transition = 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+    });
+    
     const targetNav = document.getElementById(`nav-${viewId}`);
-    if (targetNav) targetNav.classList.add('active');
+    if (targetNav) {
+        targetNav.classList.add('active');
+        
+        // Esaltazione del tab attivo
+        targetNav.style.color = 'var(--text)';
+        targetNav.style.opacity = '1';
+        targetNav.style.transform = 'scale(1.15)';
+        targetNav.style.fontWeight = '900';
+    }
 
     if (viewId === 'library') renderLibrary();
     if (viewId === 'home') renderHome();

@@ -79,6 +79,19 @@
         .btn-outline { background: transparent; border: 1.5px solid var(--text); color: var(--text); }
         .btn-outline:hover { background: var(--input-bg); }
         .btn-small { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+
+        /* STATO ATTIVO DEI FILTRI */
+        .btn-outline.active { 
+            background: var(--text); 
+            color: var(--bg); 
+            border-color: var(--text); 
+        }
+        /* Eccezione visiva per il bottone Preferite quando è attivo */
+        .btn-outline.active[onclick*="'favorite'"] {
+            background: var(--danger) !important;
+            color: white !important;
+            border-color: var(--danger) !important;
+        }
         
         input { padding: 0.75rem 1rem; font-size: 1rem; border: 1px solid var(--border); border-radius: 4px; width: 100%; background-color: var(--input-bg); color: var(--text); outline: none; }
         input:focus { border-color: var(--primary); }
@@ -178,33 +191,48 @@
         <section id="view-library" class="view">
             
             <!-- HEADER A TAB DINAMICO -->
-            <div style="display: flex; gap: 1rem; align-items: baseline; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; user-select: none;">
+            <div style="display: flex; gap: 1rem; align-items: baseline; margin-bottom: 0.75rem; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; user-select: none;">
                 <h2 id="tab-tv" onclick="switchLibraryTab('tv')" style="margin: 0; font-size: 1.8rem; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase; cursor: pointer; color: var(--text); opacity: 1; transition: color 0.2s, opacity 0.2s;">Serie</h2>
                 <span style="font-size: 1.5rem; color: var(--text-muted); font-weight: 900; opacity: 0.5;">/</span>
                 <h2 id="tab-movie" onclick="switchLibraryTab('movie')" style="margin: 0; font-size: 1.8rem; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase; cursor: pointer; color: var(--text-muted); opacity: 0.5; transition: color 0.2s, opacity 0.2s;">Film</h2>
             </div>
             
+            <!-- CONTROLLO ORDINAMENTO -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <span style="font-size: 0.75rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase;">Ordina per:</span>
+                <select id="library-sort" onchange="setLibrarySort(this.value)" style="padding: 0.3rem 0.5rem; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.75rem; font-weight: 800; outline: none; cursor: pointer;">
+                    <option value="recent">Ultima Interazione</option>
+                    <option value="added">Data di Aggiunta</option>
+                    <option value="az">Alfabetico (A-Z)</option>
+                </select>
+            </div>
+            
             <!-- SEZIONE 1: SERIE TV -->
             <div id="library-tv-section">
+                <!-- Filtri Serie TV -->
                 <div id="tv-filters" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
-                    <button class="btn btn-small btn-outline active" onclick="setLibraryFilter('tv', 'all')">Tutte</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'watching')">In Corso</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'planned')">Da Vedere</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'paused')">In Pausa</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'completed')">Viste</button>
-                    <button class="btn btn-small btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="setLibraryFilter('tv', 'favorite')">❤ Preferite</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'all')">Tutte</button>
+                <button class="btn btn-small btn-outline active" onclick="setLibraryFilter('tv', 'watching')">In Corso</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'planned')">Da Vedere</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'paused')">In Pausa</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('tv', 'completed')">Viste</button>
+                <button class="btn btn-small btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="setLibraryFilter('tv', 'favorite')">❤ Preferite</button>
                 </div>
+                <!-- Griglia di destinazione SERIE -->
                 <div id="tv-grid"></div>
             </div>
 
-            <!-- SEZIONE 2: FILM (Nascosta di default) -->
+            <!-- SEZIONE 2: FILM -->
             <div id="library-movie-section" style="display: none;">
-                <div id="movie-filters" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
-                    <button class="btn btn-small btn-outline active" onclick="setLibraryFilter('movie', 'all')">Tutti</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('movie', 'planned')">Da Vedere</button>
-                    <button class="btn btn-small btn-outline" onclick="setLibraryFilter('movie', 'completed')">Visti</button>
-                    <button class="btn btn-small btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="setLibraryFilter('movie', 'favorite')">❤ Preferiti</button>
+                <!-- Filtri Film -->
+                <!-- Filtri Film -->
+            <div id="movie-filters" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
+                <button class="btn btn-small btn-outline active" onclick="setLibraryFilter('movie', 'all')">Tutti</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('movie', 'planned')">Da Vedere</button>
+                <button class="btn btn-small btn-outline" onclick="setLibraryFilter('movie', 'completed')">Visti</button>
+                <button class="btn btn-small btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="setLibraryFilter('movie', 'favorite')">❤ Preferiti</button>
                 </div>
+                <!-- Griglia di destinazione FILM -->
                 <div id="movie-grid"></div>
             </div>
 
